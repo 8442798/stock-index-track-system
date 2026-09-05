@@ -1,0 +1,18 @@
+{
+  "data_source": "akshare",
+  "symbol": "IF0",
+  "start_date": "2025-09-01",
+  "end_date": "2026-09-01",
+  "initial_capital": 1000000.0,
+  "margin_ratio": 0.12,
+  "contract_multiplier": 300,
+  "commission_rate": 0.000023,
+  "slippage": 0.2,
+  "strategy_name": "dual_ma",
+  "strategy_params": {
+    "short_window": 5,
+    "long_window": 20,
+    "position_size": 1
+  },
+  "output_dir": "output"
+}
