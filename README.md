@@ -6,7 +6,7 @@
 
 - **图形化界面**: 直观的GUI界面，所有配置和结果可视化展示
 - **多种数据源支持**: AKShare（免费）、Tushare、本地CSV
-- **丰富的策略库**: 5种经典量化策略，支持自定义扩展
+- **丰富的策略库**: 6种量化策略，支持自定义扩展
 - **完整的回测引擎**: 支持保证金、手续费、滑点模拟
 - **详细的绩效分析**: 12项专业指标（夏普比率、最大回撤、胜率等）
 - **可视化报表**: 权益曲线、月度收益、回撤分析、交易分析
@@ -42,14 +42,16 @@
 ├── gui.py              # 图形界面主程序
 ├── main.py             # 命令行入口
 ├── engine.py           # 回测引擎核心（订单、持仓、资金管理）
-├── strategies.py       # 策略库（5种经典策略）
+├── strategies.py       # 策略库（6种策略）
 ├── data_handler.py     # 数据获取模块（AKShare/Tushare/CSV）
 ├── metrics.py          # 绩效统计模块（12项指标）
-├── visualization.py    # 可视化模块（4种图表）
+├── visualization.py    # 可视化模块（5种图表）
 ├── config.py           # 配置管理
 ├── sample_data.py      # 示例数据生成器
 ├── config.json         # 示例配置文件
 ├── requirements.txt    # 依赖包列表
+├── doc/                # 策略文档目录
+│   └── 隔日极限做空策略.md
 ├── data/               # 数据目录
 └── output/             # 输出目录（图表、交易记录）
 ```
@@ -123,6 +125,7 @@ result = run_backtest(config)
 | bollinger | 布林带策略，触及上下轨交易 | 震荡行情 |
 | rsi | RSI均值回归策略，超买超卖交易 | 震荡行情 |
 | momentum | 动量突破策略，突破N日高低点 | 强趋势行情 |
+| overnight_limit_short | 隔日极限做空策略，前收盘价±1%限价单 | 震荡行情 |
 
 ## 策略参数说明
 
@@ -161,6 +164,14 @@ result = run_backtest(config)
 | lookback | 回看周期 | 20 |
 | position_size | 持仓手数 | 1 |
 
+### 隔日极限做空策略 (overnight_limit_short)
+| 参数 | 说明 | 默认值 |
+|-----|------|-------|
+| position_size | 每次开仓手数 | 1 |
+| entry_pct | 开空偏移百分比 | 0.01 (1%) |
+| take_profit | 止盈百分比 | 0.05 (5%) |
+| stop_loss | 止损百分比 | 0.02 (2%) |
+
 ## 输出说明
 
 ### GUI界面标签页
@@ -172,6 +183,7 @@ result = run_backtest(config)
 | 月度收益 | 各月收益热力图 |
 | 回撤分析 | 回撤曲线 + 回撤分布 |
 | 交易分析 | 买卖分布、日期分布、价格分布、累计数量 |
+| K线图 | 日K线图，标记交易点（开多/平多/开空/平空） |
 | 交易记录 | 成交明细表格，支持导出CSV |
 | 运行日志 | 实时日志输出 |
 
@@ -185,6 +197,7 @@ output/
 ├── {策略名}_monthly.png     # 月度收益图
 ├── {策略名}_drawdown.png    # 回撤分析图
 ├── {策略名}_trades.png      # 交易分析图
+├── {策略名}_kline.png       # 日K线图（含交易标记）
 └── {策略名}_trades.csv      # 交易记录
 ```
 

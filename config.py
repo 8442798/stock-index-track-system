@@ -77,6 +77,14 @@ class StrategyConfig:
         'lookback': 20,
         'position_size': 1
     }
+    
+    # 隔日极限做空策略
+    OVERNIGHT_LIMIT_SHORT = {
+        'position_size': 1,
+        'entry_pct': 0.01,
+        'take_profit': 0.05,
+        'stop_loss': 0.02
+    }
 
 
 # 默认配置

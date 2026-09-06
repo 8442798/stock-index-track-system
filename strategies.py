@@ -442,6 +442,89 @@ class MomentumBreakoutStrategy(Strategy):
             )
 
 
+class OvernightLimitShortStrategy(Strategy):
+    """
+    隔日极限做空策略
+    以前一日收盘价+1%的价格开空单
+    盈利5%或亏损2%时平仓
+    """
+    
+    def __init__(self, params: Dict = None):
+        default_params = {
+            'position_size': 1,
+            'entry_pct': 0.01,
+            'take_profit': 0.05,
+            'stop_loss': 0.02
+        }
+        if params:
+            default_params.update(params)
+        super().__init__(default_params)
+        
+        self.prev_close = None
+        self.entry_price = None
+    
+    def _get_position(self, engine):
+        """从引擎获取当前持仓（正数=多头，负数=空头，0=空仓）"""
+        if engine.portfolio.positions:
+            pos = list(engine.portfolio.positions.values())[0]
+            return pos.quantity if pos.side.value == 'long' else -pos.quantity
+        return 0
+    
+    def on_bar(self, engine: BacktestEngine, bar: Dict):
+        current_price = bar['close']
+        bar_high = bar['high']
+        bar_low = bar['low']
+        
+        # 第一根bar，记录收盘价
+        if self.prev_close is None:
+            self.prev_close = current_price
+            return
+        
+        current_position = self._get_position(engine)
+        
+        # 持仓中：检查止盈止损
+        if current_position < 0 and self.entry_price is not None:
+            # 盈利5%平仓：价格 <= 开仓价 * (1 - 5%)
+            if bar_low <= self.entry_price * (1 - self.params['take_profit']):
+                engine.submit_order(
+                    symbol='IF',
+                    side=OrderSide.BUY,
+                    quantity=abs(current_position),
+                    order_type=OrderType.MARKET
+                )
+                self.entry_price = None
+                self.prev_close = current_price
+                return
+            
+            # 亏损2%平仓：价格 >= 开仓价 * (1 + 2%)
+            if bar_high >= self.entry_price * (1 + self.params['stop_loss']):
+                engine.submit_order(
+                    symbol='IF',
+                    side=OrderSide.BUY,
+                    quantity=abs(current_position),
+                    order_type=OrderType.MARKET
+                )
+                self.entry_price = None
+                self.prev_close = current_price
+                return
+        
+        # 空仓：检查开空条件
+        entry_price = self.prev_close * (1 + self.params['entry_pct'])
+        if current_position == 0 and bar_high >= entry_price:
+            engine.submit_order(
+                symbol='IF',
+                side=OrderSide.SELL,
+                quantity=self.params['position_size'],
+                order_type=OrderType.MARKET
+            )
+            self.entry_price = entry_price
+            self.prev_close = current_price
+            return
+        
+        # 无交易，更新收盘价
+        self.prev_close = current_price
+
+
 def get_strategy(strategy_name: str, params: Dict = None) -> Strategy:
     """
     工厂函数：根据策略名称返回策略实例
@@ -459,6 +542,7 @@ def get_strategy(strategy_name: str, params: Dict = None) -> Strategy:
         'bollinger': BollingerBandStrategy,
         'rsi': RSIMeanReversionStrategy,
         'momentum': MomentumBreakoutStrategy,
+        'overnight_limit_short': OvernightLimitShortStrategy,
     }
     
     if strategy_name not in strategies:

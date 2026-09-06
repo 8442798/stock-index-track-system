@@ -155,7 +155,7 @@ class BacktestGUI:
         ttk.Label(strategy_frame, text="选择策略:").pack(anchor=tk.W)
         self.strategy_name = ttk.Combobox(
             strategy_frame, 
-            values=["dual_ma", "ma_cross", "bollinger", "rsi", "momentum"],
+            values=["dual_ma", "ma_cross", "bollinger", "rsi", "momentum", "overnight_limit_short"],
             state="readonly"
         )
         self.strategy_name.set("bollinger")
@@ -371,6 +371,7 @@ class BacktestGUI:
             "bollinger": StrategyConfig.BOLLINGER,
             "rsi": StrategyConfig.RSI,
             "momentum": StrategyConfig.MOMENTUM,
+            "overnight_limit_short": StrategyConfig.OVERNIGHT_LIMIT_SHORT,
         }
         return params_map.get(strategy_name, {}).copy()
     
@@ -380,7 +381,8 @@ class BacktestGUI:
             "ma_cross": "均线交叉策略：快慢均线交叉交易，支持止盈止损。风险可控。",
             "bollinger": "布林带策略：价格触及下轨做多，触及上轨做空。适合震荡行情。",
             "rsi": "RSI策略：RSI超卖时做多，超买时做空。均值回归策略。",
-            "momentum": "动量突破策略：突破N日高点做多，跌破N日低点做空。趋势跟踪。"
+            "momentum": "动量突破策略：突破N日高点做多，跌破N日低点做空。趋势跟踪。",
+            "overnight_limit_short": "隔日极限做空：前收盘价+1%开空，盈利5%或亏损2%平仓。"
         }
         self.strategy_desc.config(state=tk.NORMAL)
         self.strategy_desc.delete(1.0, tk.END)

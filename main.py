@@ -202,6 +202,7 @@ def main():
         print("  - bollinger:  布林带策略")
         print("  - rsi:        RSI均值回归策略")
         print("  - momentum:   动量突破策略")
+        print("  - overnight_limit_short: 隔日极限做空策略")
         return
     
     # 加载配置

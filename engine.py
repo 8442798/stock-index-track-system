@@ -166,18 +166,24 @@ class BacktestEngine:
         commission_rate: float = 0.000023,  # 股指期货手续费率
         slippage: float = 0.2,  # 滑点（指数点）
         margin_ratio: float = 0.12,  # 保证金比例
-        contract_multiplier: int = 300  # 合约乘数
+        contract_multiplier: int = 300,  # 合约乘数
+        max_trades_per_year: int = 24  # 每年最大开仓次数
     ):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage = slippage
         self.margin_ratio = margin_ratio
         self.contract_multiplier = contract_multiplier
+        self.max_trades_per_year = max_trades_per_year
         
         self.portfolio = Portfolio(initial_capital)
         self.data = None
         self.current_bar_index = 0
         self.current_timestamp = None
+        
+        # 年度交易计数
+        self.year_trade_count = 0
+        self.current_year = None
         
     def load_data(self, data: pd.DataFrame):
         """加载历史数据"""
@@ -196,6 +202,34 @@ class BacktestEngine:
         order_type: OrderType = OrderType.MARKET
     ) -> Order:
         """提交订单"""
+        # 检查年度交易次数限制
+        if self.current_timestamp is not None:
+            trade_year = self.current_timestamp.year if hasattr(self.current_timestamp, 'year') else None
+            if trade_year is not None:
+                if trade_year != self.current_year:
+                    self.current_year = trade_year
+                    self.year_trade_count = 0
+                
+                # 检查是否达到年度限制（只计算开仓交易）
+                pos = self.portfolio.positions.get(symbol)
+                is_open = (pos is None) or \
+                          (side == OrderSide.BUY and pos.side == PositionSide.SHORT) or \
+                          (side == OrderSide.SELL and pos.side == PositionSide.LONG) or \
+                          (pos is not None and side == OrderSide.BUY and pos.side == PositionSide.LONG and quantity > pos.quantity) or \
+                          (pos is not None and side == OrderSide.SELL and pos.side == PositionSide.SHORT and quantity > pos.quantity)
+                
+                if is_open and self.year_trade_count >= self.max_trades_per_year:
+                    return Order(
+                        order_id=f"ORD_{len(self.portfolio.trades) + 1:06d}",
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=price or self.get_current_price(),
+                        timestamp=self.current_timestamp,
+                        status="rejected"
+                    )
+        
         order = Order(
             order_id=f"ORD_{len(self.portfolio.trades) + 1:06d}",
             symbol=symbol,
@@ -260,6 +294,10 @@ class BacktestEngine:
             # 更新组合
             self.portfolio.trades.append(trade)
             self.portfolio.update_position(trade)
+            
+            # 统计年度开仓次数
+            if action in ["开多", "开空"]:
+                self.year_trade_count += 1
             
             order.status = "filled"
             order.filled_price = fill_price
