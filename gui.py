@@ -224,7 +224,12 @@ class BacktestGUI:
         self.notebook.add(trade_frame, text="交易分析")
         self.create_chart_tab(trade_frame, "trades")
         
-        # 标签页6: 交易记录
+        # 标签页6: K线图
+        kline_frame = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(kline_frame, text="K线图")
+        self.create_chart_tab(kline_frame, "kline")
+        
+        # 标签页7: 交易记录
         records_frame = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(records_frame, text="交易记录")
         self.create_records_tab(records_frame)
@@ -303,7 +308,7 @@ class BacktestGUI:
         self.record_count.pack(side=tk.RIGHT)
         
         # 交易记录表格
-        columns = ("trade_id", "action", "side", "price", "quantity", "timestamp", "commission")
+        columns = ("trade_id", "action", "side", "price", "quantity", "timestamp", "commission", "pnl_points", "pnl_amount", "pnl_percent")
         self.trades_tree = ttk.Treeview(parent, columns=columns, show="headings", height=20)
         
         headers = {
@@ -313,7 +318,10 @@ class BacktestGUI:
             "price": "成交价",
             "quantity": "数量",
             "timestamp": "时间",
-            "commission": "手续费"
+            "commission": "手续费",
+            "pnl_points": "股指盈亏",
+            "pnl_amount": "盈亏金额",
+            "pnl_percent": "盈亏比例"
         }
         
         for col, text in headers.items():
@@ -322,6 +330,9 @@ class BacktestGUI:
         
         self.trades_tree.column("trade_id", width=90)
         self.trades_tree.column("timestamp", width=100)
+        self.trades_tree.column("pnl_points", width=90)
+        self.trades_tree.column("pnl_amount", width=110)
+        self.trades_tree.column("pnl_percent", width=100)
         
         scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.trades_tree.yview)
         self.trades_tree.configure(yscrollcommand=scrollbar.set)
@@ -469,10 +480,62 @@ class BacktestGUI:
         for item in self.trades_tree.get_children():
             self.trades_tree.delete(item)
         
+        # 配对交易计算盈亏
+        contract_multiplier = 300
+        open_positions = {}  # 持仓记录: symbol -> {price, side, quantity}
+        
         # 插入新数据
         for trade in trades:
             timestamp = trade.timestamp.strftime('%Y-%m-%d') if hasattr(trade.timestamp, 'strftime') else str(trade.timestamp)
             side_text = "买入" if trade.side.value == "buy" else "卖出"
+            
+            pnl_points = ""
+            pnl_amount = ""
+            pnl_percent = ""
+            
+            symbol = trade.symbol
+            
+            if symbol in open_positions:
+                pos = open_positions[symbol]
+                
+                # 判断是否为平仓操作
+                is_close = (trade.side.value == 'sell' and pos['side'] == 'buy') or \
+                           (trade.side.value == 'buy' and pos['side'] == 'sell')
+                
+                if is_close:
+                    # 计算股指盈亏点数
+                    if pos['side'] == 'buy':
+                        points = trade.price - pos['price']
+                    else:
+                        points = pos['price'] - trade.price
+                    
+                    # 计算盈亏金额
+                    pnl = points * trade.quantity * contract_multiplier - trade.commission
+                    
+                    # 计算盈亏比例
+                    cost = pos['price'] * trade.quantity * contract_multiplier
+                    if cost > 0:
+                        percent = (pnl / cost) * 100
+                        pnl_percent = f"{percent:.2f}%"
+                    
+                    pnl_points = f"{points:.2f}"
+                    pnl_amount = f"{pnl:,.2f}"
+                    
+                    # 平仓后删除持仓记录
+                    del open_positions[symbol]
+                else:
+                    # 加仓，更新平均价格和数量
+                    total_qty = pos['quantity'] + trade.quantity
+                    pos['price'] = (pos['price'] * pos['quantity'] + trade.price * trade.quantity) / total_qty
+                    pos['quantity'] = total_qty
+            else:
+                # 开仓
+                open_positions[symbol] = {
+                    'price': trade.price,
+                    'side': trade.side.value,
+                    'quantity': trade.quantity
+                }
+            
             self.trades_tree.insert("", tk.END, values=(
                 trade.trade_id,
                 trade.action,
@@ -480,7 +543,10 @@ class BacktestGUI:
                 f"{trade.price:.1f}",
                 trade.quantity,
                 timestamp,
-                f"{trade.commission:.2f}"
+                f"{trade.commission:.2f}",
+                pnl_points,
+                pnl_amount,
+                pnl_percent
             ))
         
         self.record_count.config(text=f"共 {len(trades)} 条记录")
@@ -544,7 +610,7 @@ class BacktestGUI:
         """窗口大小变化时重绘图表"""
         # 只处理主窗口大小变化
         if event.widget == self.root:
-            for chart_type in ["equity", "monthly", "drawdown", "trades"]:
+            for chart_type in ["equity", "monthly", "drawdown", "trades", "kline"]:
                 chart_path = getattr(self, f"chart_path_{chart_type}", None)
                 if chart_path and os.path.exists(chart_path):
                     label = getattr(self, f"chart_label_{chart_type}", None)
@@ -637,7 +703,9 @@ class BacktestGUI:
             charts = visualizer.generate_all_charts(
                 equity_df,
                 engine.portfolio.trades,
-                prefix=config.strategy_name
+                prefix=config.strategy_name,
+                kline_data=data,
+                symbol=config.symbol
             )
             self.root.after(0, lambda: self.progress.configure(value=95))
             
@@ -756,7 +824,7 @@ class BacktestGUI:
                     data.append(values)
                 
                 if data:
-                    columns = ["trade_id", "order_id", "side", "price", "quantity", "timestamp", "commission"]
+                    columns = ["trade_id", "action", "side", "price", "quantity", "timestamp", "commission", "pnl_points", "pnl_amount", "pnl_percent"]
                     df = pd.DataFrame(data, columns=columns)
                     df.to_csv(filepath, index=False, encoding='utf-8-sig')
                     messagebox.showinfo("成功", f"已导出 {len(data)} 条记录")

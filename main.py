@@ -100,7 +100,54 @@ def run_backtest(config: BacktestConfig = None):
     if config.save_trades and engine.portfolio.trades:
         trades_file = os.path.join(config.output_dir, f"{config.strategy_name}_trades.csv")
         trades_data = []
+        
+        # 配对交易计算盈亏
+        open_positions = {}  # 持仓记录: symbol -> {price, side, quantity}
+        
         for trade in engine.portfolio.trades:
+            pnl_amount = None
+            pnl_percent = None
+            pnl_points = None
+            
+            symbol = trade.symbol
+            
+            if symbol in open_positions:
+                pos = open_positions[symbol]
+                
+                # 判断是否为平仓操作
+                is_close = (trade.side.value == 'sell' and pos['side'] == 'buy') or \
+                           (trade.side.value == 'buy' and pos['side'] == 'sell')
+                
+                if is_close:
+                    # 计算股指盈亏点数
+                    if pos['side'] == 'buy':
+                        pnl_points = trade.price - pos['price']
+                    else:
+                        pnl_points = pos['price'] - trade.price
+                    
+                    # 计算盈亏金额
+                    pnl_amount = pnl_points * trade.quantity * config.contract_multiplier - trade.commission
+                    
+                    # 计算盈亏比例
+                    cost = pos['price'] * trade.quantity * config.contract_multiplier
+                    if cost > 0:
+                        pnl_percent = (pnl_amount / cost) * 100
+                    
+                    # 平仓后删除持仓记录
+                    del open_positions[symbol]
+                else:
+                    # 加仓，更新平均价格和数量
+                    total_qty = pos['quantity'] + trade.quantity
+                    pos['price'] = (pos['price'] * pos['quantity'] + trade.price * trade.quantity) / total_qty
+                    pos['quantity'] = total_qty
+            else:
+                # 开仓
+                open_positions[symbol] = {
+                    'price': trade.price,
+                    'side': trade.side.value,
+                    'quantity': trade.quantity
+                }
+            
             trades_data.append({
                 'trade_id': trade.trade_id,
                 'order_id': trade.order_id,
@@ -110,7 +157,10 @@ def run_backtest(config: BacktestConfig = None):
                 'price': trade.price,
                 'quantity': trade.quantity,
                 'timestamp': trade.timestamp,
-                'commission': trade.commission
+                'commission': trade.commission,
+                'pnl_points': round(pnl_points, 2) if pnl_points is not None else '',
+                'pnl_amount': round(pnl_amount, 2) if pnl_amount is not None else '',
+                'pnl_percent': round(pnl_percent, 4) if pnl_percent is not None else ''
             })
         
         import pandas as pd
