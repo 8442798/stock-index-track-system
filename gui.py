@@ -944,13 +944,19 @@ class BacktestGUI:
         if self.kline_fig is None or self.kline_canvas is None:
             return
         try:
+            # 确保容器已经完成布局，防止maximize时winfo_width/height返回0或旧值
+            self.kline_chart_frame.update_idletasks()
             w = self.kline_chart_frame.winfo_width()
             h = self.kline_chart_frame.winfo_height()
             if w < 100 or h < 100:
+                # 稍后重试
+                self.root.after(100, self._fit_kline_figure)
                 return
             dpi = self.kline_fig.dpi
             # 仅当尺寸变化显著时重设，避免循环抖动
-            if abs(self.kline_fig.get_figwidth() * dpi - w) > 8 or abs(self.kline_fig.get_figheight() * dpi - h) > 8:
+            fig_w = self.kline_fig.get_figwidth() * dpi
+            fig_h = self.kline_fig.get_figheight() * dpi
+            if abs(fig_w - w) > 8 or abs(fig_h - h) > 8:
                 self.kline_fig.set_size_inches(w / dpi, h / dpi, forward=False)
                 self.kline_fig.tight_layout()
                 # 背景缓存失效：下次blit时重新整图绘制并缓存
