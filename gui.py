@@ -436,7 +436,7 @@ class BacktestGUI:
             "rsi": "RSI策略：RSI超卖时做多，超买时做空。均值回归策略。",
             "momentum": "动量突破策略：突破N日高点做多，跌破N日低点做空。趋势跟踪。",
             "overnight_limit_short": "隔日极限做空：前收盘价+1%开空，盈利5%或亏损2%平仓。",
-            "four_day_flip": "4日翻转短线：连续4天阴线跌6%次日开盘做多，连4阳涨6%次日开盘做空，盈利8%或亏2%平仓。"
+            "four_day_flip": "4日翻转短线：连续4天阴线跌6%次日开盘做多，连4阳涨6%次日开盘做空；盈利后移动止损回撤2%保护，固定亏损2%平仓。"
         }
         self.strategy_desc.config(state=tk.NORMAL)
         self.strategy_desc.delete(1.0, tk.END)

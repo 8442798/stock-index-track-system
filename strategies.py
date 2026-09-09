@@ -591,10 +591,11 @@ class FourDayFlipShortStrategy(Strategy):
     4日翻转短线策略
     1. 连续4天阴线(当日收盘<当日开盘)且累计跌幅大于6%：下一交易日开盘开多仓
     2. 连续4天阳线(当日收盘>当日开盘)且累计涨幅大于6%：下一交易日开盘开空仓
-    3. 盈利8%平仓
-    4. 亏损达2%平仓
+    3. 移动止损：开仓后若持仓已有利，止损位跟随持仓极值移动(离极值回撤2%)
+    4. 固定止损：亏损达2%平仓
     说明：阴/阳线按K线实体(收盘vs开盘)判定，不比较前一日收盘；
-          累计涨跌幅 = (当日收盘 / streak_days日前的收盘) - 1
+          累计涨跌幅 = (当日收盘 / streak_days日前的收盘) - 1；
+          移动止损回撤比例与固定止损同为 stop_loss=2%
     """
 
     def __init__(self, params: Dict = None):
@@ -602,8 +603,7 @@ class FourDayFlipShortStrategy(Strategy):
             'position_size': 1,
             'streak_days': 4,     # 连续阴/阳天数
             'threshold': 0.06,    # 累计涨跌幅阈值 6%
-            'take_profit': 0.08,  # 止盈 8%
-            'stop_loss': 0.02     # 止损 2%
+            'stop_loss': 0.02     # 固定止损2%；移动止损回撤亦按2%
         }
         if params:
             default_params.update(params)
@@ -614,6 +614,7 @@ class FourDayFlipShortStrategy(Strategy):
         self.entry_price = None  # 开仓价
         self.pending = None      # 待执行方向: 'long'/'short'（下一开盘执行）
         self._execute_bar = False  # 是否已在开盘成交（防止同一根bar重复）
+        self.extreme_price = None  # 持仓以来有利极值(多头为最高/空头为最低)
 
     def _get_position(self, engine):
         """从引擎获取当前持仓（正数=多头，负数=空头，0=空仓）"""
@@ -662,49 +663,54 @@ class FourDayFlipShortStrategy(Strategy):
             self._execute_bar = False
             return
 
-        # 持仓中：检查止盈止损
+        # 持仓中：跟踪极值并检查移动止损/固定止损
         if current_position != 0 and self.entry_price is not None:
-            if current_position > 0:  # 多头
-                if bar_high >= self.entry_price * (1 + self.params['take_profit']):
+            stop_ratio = self.params['stop_loss']
+            if current_position > 0:  # 多头：极值取最高价，止损为极值回撤2%
+                if self.extreme_price is None:
+                    self.extreme_price = self.entry_price
+                self.extreme_price = max(self.extreme_price, bar_high)
+                trail_stop = self.extreme_price * (1 - stop_ratio)
+                fixed_stop = self.entry_price * (1 - stop_ratio)
+                if bar_low <= trail_stop:
+                    if trail_stop >= fixed_stop and self.extreme_price > self.entry_price:
+                        reason = (f"多头移动止盈：自最高{self.extreme_price:.2f}"
+                                  f"回撤{stop_ratio*100:.0f}%，止损位{trail_stop:.2f}")
+                    else:
+                        reason = (f"多头固定止损：最低{bar_low:.2f}达开仓价"
+                                  f"{self.entry_price:.2f}的-{stop_ratio*100:.0f}%")
                     engine.submit_order(
                         symbol='IF', side=OrderSide.SELL,
                         quantity=abs(current_position),
                         order_type=OrderType.MARKET,
-                        reason=f"多头止盈：最高{bar_high:.2f}达开仓价{self.entry_price:.2f}的+{self.params['take_profit']*100:.0f}%"
+                        reason=reason
                     )
                     self.entry_price = None
                     self.pending = None
+                    self.extreme_price = None
                     return
-                if bar_low <= self.entry_price * (1 - self.params['stop_loss']):
-                    engine.submit_order(
-                        symbol='IF', side=OrderSide.SELL,
-                        quantity=abs(current_position),
-                        order_type=OrderType.MARKET,
-                        reason=f"多头止损：最低{bar_low:.2f}达开仓价{self.entry_price:.2f}的-{self.params['stop_loss']*100:.0f}%"
-                    )
-                    self.entry_price = None
-                    self.pending = None
-                    return
-            else:  # 空头
-                if bar_low <= self.entry_price * (1 - self.params['take_profit']):
-                    engine.submit_order(
-                        symbol='IF', side=OrderSide.BUY,
-                        quantity=abs(current_position),
-                        order_type=OrderType.MARKET,
-                        reason=f"空头止盈：最低{bar_low:.2f}达开仓价{self.entry_price:.2f}的-{self.params['take_profit']*100:.0f}%"
-                    )
-                    self.entry_price = None
-                    self.pending = None
-                    return
-                if bar_high >= self.entry_price * (1 + self.params['stop_loss']):
+            else:  # 空头：极值取最低价，止损为极值反弹2%
+                if self.extreme_price is None:
+                    self.extreme_price = self.entry_price
+                self.extreme_price = min(self.extreme_price, bar_low)
+                trail_stop = self.extreme_price * (1 + stop_ratio)
+                fixed_stop = self.entry_price * (1 + stop_ratio)
+                if bar_high >= trail_stop:
+                    if trail_stop <= fixed_stop and self.extreme_price < self.entry_price:
+                        reason = (f"空头移动止盈：自最低{self.extreme_price:.2f}"
+                                  f"反弹{stop_ratio*100:.0f}%，止损位{trail_stop:.2f}")
+                    else:
+                        reason = (f"空头固定止损：最高{bar_high:.2f}达开仓价"
+                                  f"{self.entry_price:.2f}的+{stop_ratio*100:.0f}%")
                     engine.submit_order(
                         symbol='IF', side=OrderSide.BUY,
                         quantity=abs(current_position),
                         order_type=OrderType.MARKET,
-                        reason=f"空头止损：最高{bar_high:.2f}达开仓价{self.entry_price:.2f}的+{self.params['stop_loss']*100:.0f}%"
+                        reason=reason
                     )
                     self.entry_price = None
                     self.pending = None
+                    self.extreme_price = None
                     return
 
         # 无持仓时处理待执行的信号（下一交易日开盘价成交）

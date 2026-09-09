@@ -91,8 +91,7 @@ class StrategyConfig:
         'position_size': 1,
         'streak_days': 4,     # 连续涨/跌天数
         'threshold': 0.06,    # 累计涨跌幅阈值 6%
-        'take_profit': 0.08,  # 止盈 8%
-        'stop_loss': 0.02     # 止损 2%
+        'stop_loss': 0.02     # 固定止损2%；移动止损回撤亦按2%
     }
 
 
