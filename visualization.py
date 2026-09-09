@@ -7,9 +7,147 @@ import matplotlib
 matplotlib.use('Agg')  # 使用非交互式后端，避免线程问题
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from typing import Dict, List, Optional
 from datetime import datetime
 import os
+
+# 设置中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
+plt.rcParams['axes.unicode_minus'] = False
+
+
+def create_interactive_kline(data, trades=None, strategy_name=None, strategy_params=None):
+    """
+    创建交互式K线图，支持鼠标悬停显示详细信息
+    
+    Args:
+        data: OHLCV数据
+        trades: 交易记录列表
+        strategy_name: 策略名称
+        strategy_params: 策略参数
+    
+    Returns:
+        fig, ax: matplotlib Figure和Axes对象
+    """
+    if data is None or data.empty:
+        return None, None
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 10),
+                                     gridspec_kw={'height_ratios': [3, 1]},
+                                     sharex=True)
+    
+    dates = range(len(data))
+    width = 0.6
+    
+    # 绘制K线
+    for i, (idx, row) in enumerate(data.iterrows()):
+        color = '#d32f2f' if row['close'] >= row['open'] else '#388e3c'
+        body_low = min(row['open'], row['close'])
+        body_high = max(row['open'], row['close'])
+        body_height = body_high - body_low
+        if body_height == 0:
+            body_height = 0.1
+        rect = plt.Rectangle((i - width/2, body_low), width, body_height,
+                           facecolor=color, edgecolor=color, linewidth=0.8)
+        ax1.add_patch(rect)
+        ax1.plot([i, i], [body_high, row['high']], color=color, linewidth=0.8)
+        ax1.plot([i, i], [body_low, row['low']], color=color, linewidth=0.8)
+    
+    # 布林带
+    if strategy_name == 'bollinger' and strategy_params:
+        window = strategy_params.get('window', 20)
+        num_std = strategy_params.get('num_std', 2)
+        if len(data) >= window:
+            data['bb_middle'] = data['close'].rolling(window=window).mean()
+            data['bb_std'] = data['close'].rolling(window=window).std()
+            data['bb_upper'] = data['bb_middle'] + num_std * data['bb_std']
+            data['bb_lower'] = data['bb_middle'] - num_std * data['bb_std']
+            ax1.plot(dates, data['bb_middle'], color='blue', linewidth=1.5,
+                    label=f'中轨(MA{window})', alpha=0.8)
+            ax1.plot(dates, data['bb_upper'], color='red', linewidth=1,
+                    label=f'上轨(+{num_std}σ)', linestyle='--', alpha=0.8)
+            ax1.plot(dates, data['bb_lower'], color='green', linewidth=1,
+                    label=f'下轨(-{num_std}σ)', linestyle='--', alpha=0.8)
+            ax1.fill_between(dates, data['bb_lower'], data['bb_upper'],
+                           alpha=0.1, color='blue')
+    
+    # 标记交易点
+    if trades:
+        trade_dates = []
+        trade_prices = []
+        trade_colors = []
+        trade_markers = []
+        trade_labels = []
+        for trade in trades:
+            trade_date = trade.timestamp
+            if hasattr(trade_date, 'date'):
+                trade_date = trade_date.date()
+            for j, (idx, row) in enumerate(data.iterrows()):
+                row_date = row['date']
+                if hasattr(row_date, 'date'):
+                    row_date = row_date.date()
+                if row_date == trade_date:
+                    trade_dates.append(j)
+                    trade_prices.append(trade.price)
+                    trade_labels.append(trade.action)
+                    if trade.action == '开多':
+                        trade_colors.append('#1565C0')
+                        trade_markers.append('^')
+                    elif trade.action == '平多':
+                        trade_colors.append('#E65100')
+                        trade_markers.append('v')
+                    elif trade.action == '开空':
+                        trade_colors.append('#6A1B9A')
+                        trade_markers.append('v')
+                    elif trade.action == '平空':
+                        trade_colors.append('#00838F')
+                        trade_markers.append('^')
+                    else:
+                        trade_colors.append('gray')
+                        trade_markers.append('o')
+                    break
+        for x, y, c, m, label in zip(trade_dates, trade_prices, trade_colors, trade_markers, trade_labels):
+            ax1.scatter(x, y, color=c, marker=m, s=220, zorder=5,
+                       edgecolors='black', linewidth=1.5)
+            offset_y = 15 if m == '^' else -15
+            ax1.annotate(label, (x, y), textcoords="offset points",
+                        xytext=(0, offset_y), ha='center', fontsize=7,
+                        fontweight='bold', color=c,
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                                 edgecolor=c, alpha=0.9))
+    
+    # 均线
+    if len(data) >= 20:
+        ma20 = data['close'].rolling(window=20).mean()
+        ax1.plot(dates, ma20, color='blue', linewidth=1, alpha=0.7, label='MA20')
+    if len(data) >= 60:
+        ma60 = data['close'].rolling(window=60).mean()
+        ax1.plot(dates, ma60, color='purple', linewidth=1, alpha=0.7, label='MA60')
+    
+    ax1.set_title('日K线图', fontsize=14)
+    ax1.set_ylabel('价格')
+    ax1.legend(loc='upper left')
+    ax1.grid(True, alpha=0.3)
+    
+    # 成交量
+    for i, (idx, row) in enumerate(data.iterrows()):
+        color = '#d32f2f' if row['close'] >= row['open'] else '#388e3c'
+        ax2.bar(i, row['volume'], width=width, color=color, alpha=0.7)
+    ax2.set_ylabel('成交量')
+    ax2.set_xlabel('日期')
+    ax2.grid(True, alpha=0.3)
+    
+    # 设置x轴刻度
+    tick_interval = max(1, len(data) // 20)
+    tick_positions = list(range(0, len(data), tick_interval))
+    tick_labels = [str(data.iloc[i]['date'])[:10] for i in tick_positions]
+    ax2.set_xticks(tick_positions)
+    ax2.set_xticklabels(tick_labels, rotation=45, fontsize=8)
+    
+    plt.tight_layout()
+    
+    return fig, ax1
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
@@ -501,3 +639,46 @@ class Visualizer:
             )
         
         return charts
+
+
+def on_kline_motion(event, data, info_label):
+    """鼠标悬停K线时的回调函数"""
+    if event.inaxes is None:
+        info_label.config(text="")
+        return
+    
+    ax = event.inaxes
+    # 获取鼠标位置对应的K线索引
+    x = event.xdata
+    if x is None or x < 0 or x >= len(data):
+        info_label.config(text="")
+        return
+    
+    idx = int(round(x))
+    if idx >= len(data):
+        idx = len(data) - 1
+    
+    row = data.iloc[idx]
+    date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+    open_p = row['open']
+    high = row['high']
+    low = row['low']
+    close = row['close']
+    volume = row['volume']
+    
+    # 计算振幅 = (最高价-最低价)/前收盘价 * 100
+    prev_close = data.iloc[idx - 1]['close'] if idx > 0 else close
+    amplitude = (high - low) / prev_close * 100 if prev_close != 0 else 0
+    
+    # 涨跌
+    change = close - open_p
+    change_pct = change / open_p * 100 if open_p != 0 else 0
+    color = '#d32f2f' if change >= 0 else '#388e3c'
+    change_str = f"{change:+.2f} ({change_pct:+.2f}%)" if change >= 0 else f"{change:.2f} ({change_pct:.2f}%)"
+    
+    info_text = (
+        f"日期: {date_str}  |  开盘: {open_p:.2f}  |  最高: {high:.2f}  |  最低: {low:.2f}  "
+        f"|  收盘: {close:.2f}  |  成交量: {volume:,.0f}  |  振幅: {amplitude:.2f}%\n"
+        f"涨跌: {change_str}"
+    )
+    info_label.config(text=info_text)
