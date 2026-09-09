@@ -589,18 +589,18 @@ class OvernightLimitShortStrategy(Strategy):
 class FourDayFlipShortStrategy(Strategy):
     """
     4日翻转短线策略
-    1. 连续4天阴线且累计跌幅大于6%：下一交易日开盘开多仓
-    2. 连续4天阳线且累计涨幅大于6%：下一交易日开盘开空仓
+    1. 连续4天阴线(当日收盘<当日开盘)且累计跌幅大于6%：下一交易日开盘开多仓
+    2. 连续4天阳线(当日收盘>当日开盘)且累计涨幅大于6%：下一交易日开盘开空仓
     3. 盈利8%平仓
     4. 亏损达2%平仓
-    说明：连续阴/阳判定为当日收盘价相对前一日收盘价的涨跌方向，
-          累计涨跌幅 = (当日收盘/4日前的收盘) - 1
+    说明：阴/阳线按K线实体(收盘vs开盘)判定，不比较前一日收盘；
+          累计涨跌幅 = (当日收盘 / streak_days日前的收盘) - 1
     """
 
     def __init__(self, params: Dict = None):
         default_params = {
             'position_size': 1,
-            'streak_days': 4,     # 连续涨/跌天数
+            'streak_days': 4,     # 连续阴/阳天数
             'threshold': 0.06,    # 累计涨跌幅阈值 6%
             'take_profit': 0.08,  # 止盈 8%
             'stop_loss': 0.02     # 止损 2%
@@ -609,7 +609,8 @@ class FourDayFlipShortStrategy(Strategy):
             default_params.update(params)
         super().__init__(default_params)
 
-        self.closes = []        # 历史收盘价
+        self.opens = []          # 历史开盘价
+        self.closes = []         # 历史收盘价
         self.entry_price = None  # 开仓价
         self.pending = None      # 待执行方向: 'long'/'short'（下一开盘执行）
         self._execute_bar = False  # 是否已在开盘成交（防止同一根bar重复）
@@ -622,30 +623,34 @@ class FourDayFlipShortStrategy(Strategy):
         return 0
 
     def _is_4day_setup(self, days=None):
-        """判断最近streak_days是否全阳/全阴，返回 ('long'/'short'/None)
-        long  : 连续阴线且累计跌幅>阈值 → 开多
-        short : 连续阳线且累计涨幅>阈值 → 开空
+        """判断最近streak_days根K线是否全阴/全阳(按实体)，返回 ('long'/'short'/None)
+        long  : 连续阴线(收<开)且累计跌幅>阈值 → 开多
+        short : 连续阳线(收>开)且累计涨幅>阈值 → 开空
         """
         streak = self.params['streak_days']
         threshold = self.params['threshold']
         n = len(self.closes)
         if n < streak + 1:
             return None
-        window = self.closes[-(streak + 1):]  # 最后 streak+1 个收盘
-        changes = [(window[i] - window[i - 1]) / window[i - 1] for i in range(1, len(window))]
-        if len(changes) != streak:
-            return None
-        cumulative = (window[-1] / window[0]) - 1
-        if all(c < 0 for c in changes) and cumulative <= -threshold:
+        # 最近 streak 根K线的实体方向：阴=收<开，阳=收>开
+        recent_open = self.opens[-streak:]
+        recent_close = self.closes[-streak:]
+        bearish = all(c < o for o, c in zip(recent_open, recent_close))
+        bullish = all(c > o for o, c in zip(recent_open, recent_close))
+        # 累计涨跌幅：以 streak_days 日前收盘为基准至今日收盘
+        cumulative = (self.closes[-1] / self.closes[-(streak + 1)]) - 1
+        if bearish and cumulative <= -threshold:
             return 'long'
-        if all(c > 0 for c in changes) and cumulative >= threshold:
+        if bullish and cumulative >= threshold:
             return 'short'
         return None
 
     def on_bar(self, engine: BacktestEngine, bar: Dict):
         current_price = bar['close']
+        bar_open = bar['open']
         bar_high = bar['high']
         bar_low = bar['low']
+        self.opens.append(bar_open)
         self.closes.append(current_price)
 
         current_position = self._get_position(engine)
