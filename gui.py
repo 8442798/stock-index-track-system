@@ -276,7 +276,8 @@ class BacktestGUI:
         self.kline_annotation = None
         self.kline_last_index = None      # 最后显示/悬停的K线索引
         self.kline_active_index = None    # 当前已绘制标记的K线索引(避免同一根内重复重绘)
-        self._kline_redraw_job = None     # 整图重绘节流job
+        self._kline_bg = None             # blit背景缓存(整图一次，之后只重绘叠加层)
+        self._kline_overlay_job = None    # 叠加层节流blit job
         self._kline_fit_size = (0, 0)
         self._kline_resize_job = None
         
@@ -686,6 +687,7 @@ class BacktestGUI:
         canvas.mpl_connect('motion_notify_event', self._on_kline_hover)
         canvas.mpl_connect('button_press_event', self._on_kline_click)
         
+        self._kline_bg = None
         canvas.draw()
         # 自适应初始尺寸
         self.root.after(50, self._fit_kline_figure)
@@ -699,6 +701,8 @@ class BacktestGUI:
         if event.button != 1:
             return
         self._handle_kline_cursor(event, persist=True)
+        # 点击后立即绘制最终标记，不受节流延迟
+        self._flush_kline_overlay()
 
     def _handle_kline_cursor(self, event, persist=False):
         """处理K线光标移动/点击：更新垂直线、数值栏与交易原因注释框"""
@@ -710,40 +714,39 @@ class BacktestGUI:
         if ax is None or x is None:
             if not persist and self.kline_active_index is not None:
                 self.kline_active_index = None
-                self._clear_kline_markers()
+                self._set_kline_markers_visible(False, redraw_now=True)
             return
         idx = int(round(x))
         if idx < 0 or idx >= len(self.kline_data):
             return
         
-        # 更新数值栏（轻量tk更新，不触发重绘）
+        # 更新数值栏（轻量tk更新）
         self._update_kline_info_bar(idx)
         
-        # 同一根K线内移动鼠标：仅刷新顶部数值栏，不重复整图重绘
+        # 同一根K线内移动鼠标：只刷新数值栏
         if self.kline_active_index == idx:
             return
         
         self.kline_active_index = idx
+        # 立即更新artist数据（代价极小），叠加层统一节流重绘
         self._set_kline_markers(idx, x, getattr(event, 'ydata', None), ax)
-        self._request_kline_redraw()
+        self._schedule_kline_overlay_redraw()
 
-    def _request_kline_redraw(self):
-        """节流合并整图重绘：避免高频motion连续排队导致卡顿"""
-        if self.kline_canvas is None:
+    def _schedule_kline_overlay_redraw(self):
+        """节流合并叠加层blit：motion高频时只保留最近一次绘制"""
+        if self.kline_canvas is None or self.kline_fig is None:
             return
-        if self._kline_redraw_job is not None:
-            return  # 已排队，等待执行（期间的最新状态都会一并重绘）
-        self._kline_redraw_job = self.root.after(60, self._do_kline_redraw)
+        if self._kline_overlay_job is not None:
+            return  # 已排队，等待执行（期间最新状态一并绘制）
+        self._kline_overlay_job = self.root.after(40, self._flush_kline_overlay)
 
-    def _do_kline_redraw(self):
-        self._kline_redraw_job = None
-        try:
-            self.kline_canvas.draw_idle()
-        except Exception:
-            pass
+    def _flush_kline_overlay(self):
+        """执行一次叠加层绘制并清空节流标记"""
+        self._kline_overlay_job = None
+        self._blit_kline_overlay()
 
     def _ensure_kline_markers(self):
-        """惰性创建垂直线与注释artist（复用，避免频繁重建）"""
+        """惰性创建垂直线与注释artist（复用）"""
         if self.kline_fig is None or not self.kline_axes:
             return False
         if not self.kline_vlines:
@@ -752,6 +755,7 @@ class BacktestGUI:
                 line = ax.axvline(0, color='orange', linewidth=1.5,
                                   linestyle='--', alpha=0.9)
                 line.set_visible(False)
+                line.set_zorder(6)
                 self.kline_vlines[ax] = line
         if self.kline_annotation is None:
             ax1, _ = self.kline_axes
@@ -767,24 +771,24 @@ class BacktestGUI:
             self.kline_annotation = ann
         return True
 
-    def _clear_kline_markers(self):
-        """隐藏垂直线与注释（保留数值栏最后显示）"""
-        if not self.kline_vlines and self.kline_annotation is None:
-            return
-        for ax, line in self.kline_vlines.items():
-            try:
-                line.set_visible(False)
-            except Exception:
-                pass
-        if self.kline_annotation is not None:
-            try:
-                self.kline_annotation.set_visible(False)
-            except Exception:
-                pass
-        self._request_kline_redraw()
+    def _set_kline_markers_visible(self, visible, redraw_now=False):
+        """开/关叠加层可见性；redraw_now=True立即blit，否则节流绘制"""
+        changed = False
+        for a, line in self.kline_vlines.items():
+            if line.get_visible() != visible:
+                line.set_visible(visible)
+                changed = True
+        if self.kline_annotation is not None and self.kline_annotation.get_visible() != visible:
+            self.kline_annotation.set_visible(visible)
+            changed = True
+        if changed:
+            if redraw_now:
+                self._flush_kline_overlay()
+            else:
+                self._schedule_kline_overlay_redraw()
 
     def _set_kline_markers(self, idx, x_data, y_data, ax):
-        """在指定K线处显示垂直线，并在鼠标附近显示该K线交易原因（若有）"""
+        """在指定K线处放置垂直线/注释数据并blit叠加层"""
         if not self._ensure_kline_markers():
             return
         # 垂直线
@@ -814,6 +818,68 @@ class BacktestGUI:
             ann.set_visible(True)
         elif ann is not None:
             ann.set_visible(False)
+        # 注：不在此处立即blit，由调用方节流调度，避免高频重绘
+
+    def _capture_kline_bg(self):
+        """完整绘制一次并缓存背景（之后叠加层blit用）"""
+        try:
+            self.kline_canvas.draw()
+            self._kline_bg = self.kline_canvas.copy_from_bbox(self.kline_fig.bbox)
+        except Exception:
+            self._kline_bg = None
+
+    def _blit_kline_overlay(self):
+        """只重绘垂直线/注释叠加层（毫秒级），避免整图重绘"""
+        canvas = self.kline_canvas
+        if canvas is None or self.kline_fig is None:
+            return
+        # 画布尚未就绪或尺寸异常则退化为完整重绘
+        try:
+            w = canvas.get_width_height()[0]
+        except Exception:
+            return
+        if w <= 1:
+            return
+        try:
+            if self._kline_bg is None:
+                # 首次：先临时隐藏叠加层完整绘制并缓存背景，再恢复期望可见性
+                state = []
+                for a, line in self.kline_vlines.items():
+                    state.append((line, line.get_visible()))
+                    line.set_visible(False)
+                if self.kline_annotation is not None:
+                    state.append((self.kline_annotation, self.kline_annotation.get_visible()))
+                    self.kline_annotation.set_visible(False)
+                self._capture_kline_bg()
+                for artist, vis in state:
+                    artist.set_visible(vis)
+                if self._kline_bg is None:
+                    return
+            canvas.restore_region(self._kline_bg)
+            for a, line in self.kline_vlines.items():
+                if line.get_visible():
+                    a.draw_artist(line)
+            if self.kline_annotation is not None and self.kline_annotation.get_visible():
+                self.kline_annotation.axes.draw_artist(self.kline_annotation)
+            canvas.blit(self.kline_fig.bbox)
+        except Exception:
+            try:
+                canvas.draw_idle()
+            except Exception:
+                pass
+
+    def _set_all_markers_off(self):
+        """临时隐藏所有叠加层（用于捕获干净背景）"""
+        for a, line in self.kline_vlines.items():
+            try:
+                line.set_visible(False)
+            except Exception:
+                pass
+        if self.kline_annotation is not None:
+            try:
+                self.kline_annotation.set_visible(False)
+            except Exception:
+                pass
     
     def _update_kline_info_bar(self, idx):
         """仅更新K线信息栏中的数值，字段名固定"""
@@ -885,7 +951,11 @@ class BacktestGUI:
             if abs(self.kline_fig.get_figwidth() * dpi - w) > 8 or abs(self.kline_fig.get_figheight() * dpi - h) > 8:
                 self.kline_fig.set_size_inches(w / dpi, h / dpi, forward=False)
                 self.kline_fig.tight_layout()
+                # 背景缓存失效：下次blit时重新整图绘制并缓存
+                self._kline_bg = None
+                self._set_all_markers_off()
                 self.kline_canvas.draw_idle()
+                self.root.after(30, self._capture_kline_bg)
         except Exception:
             pass
         
