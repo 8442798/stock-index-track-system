@@ -67,6 +67,7 @@ class Trade:
     timestamp: datetime
     commission: float = 0.0
     action: str = ""  # 开多/开空/平多/平空
+    reason: str = ""  # 交易原因（策略触发说明）
 
 
 class Portfolio:
@@ -199,7 +200,8 @@ class BacktestEngine:
         side: OrderSide,
         quantity: int,
         price: float = None,
-        order_type: OrderType = OrderType.MARKET
+        order_type: OrderType = OrderType.MARKET,
+        reason: str = ""
     ) -> Order:
         """提交订单"""
         # 检查年度交易次数限制
@@ -287,7 +289,8 @@ class BacktestEngine:
                 quantity=quantity,
                 timestamp=self.current_timestamp,
                 commission=commission,
-                action=action
+                action=action,
+                reason=reason
             )
             
             # 更新组合

@@ -106,5 +106,5 @@ python main.py --strategy bollinger --symbol IF0 --start 2025-09-01 --end 2026-0
 - 只在用户明确要求时才 commit / push
 
 ## 约束
-- 必须使用中文
+- 解析过程必须使用中文
 - 先分析SYSTEM_ANALYSIS.md

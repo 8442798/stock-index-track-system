@@ -55,7 +55,8 @@ class DualMAStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"双均线金叉({self.params['short_window']}/{self.params['long_window']})，平空转多"
                 )
                 current_position = 0  # 更新本地持仓状态
             # 开多
@@ -63,7 +64,8 @@ class DualMAStrategy(Strategy):
                 symbol='IF',
                 side=OrderSide.BUY,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"双均线金叉({self.params['short_window']}/{self.params['long_window']})，开多"
             )
             
         elif short_ma_value < long_ma_value and current_position >= 0:
@@ -74,7 +76,8 @@ class DualMAStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"双均线死叉({self.params['short_window']}/{self.params['long_window']})，平多转空"
                 )
                 current_position = 0  # 更新本地持仓状态
             # 开空
@@ -82,7 +85,8 @@ class DualMAStrategy(Strategy):
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"双均线死叉({self.params['short_window']}/{self.params['long_window']})，开空"
             )
 
 
@@ -133,22 +137,44 @@ class MACrossStrategy(Strategy):
             pnl_pct = (current_price - self.entry_price) / self.entry_price
             
             if current_position > 0:  # 多头
-                if pnl_pct <= -self.params['stop_loss'] or pnl_pct >= self.params['take_profit']:
+                if pnl_pct <= -self.params['stop_loss']:
                     engine.submit_order(
                         symbol='IF',
                         side=OrderSide.SELL,
                         quantity=abs(current_position),
-                        order_type=OrderType.MARKET
+                        order_type=OrderType.MARKET,
+                        reason=f"多头止损({pnl_pct*100:.2f}%<=-{self.params['stop_loss']*100:.0f}%)"
+                    )
+                    self.entry_price = 0
+                    return
+                if pnl_pct >= self.params['take_profit']:
+                    engine.submit_order(
+                        symbol='IF',
+                        side=OrderSide.SELL,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"多头止盈({pnl_pct*100:.2f}%>={self.params['take_profit']*100:.0f}%)"
                     )
                     self.entry_price = 0
                     return
             else:  # 空头
-                if pnl_pct >= self.params['stop_loss'] or pnl_pct <= -self.params['take_profit']:
+                if pnl_pct >= self.params['stop_loss']:
                     engine.submit_order(
                         symbol='IF',
                         side=OrderSide.BUY,
                         quantity=abs(current_position),
-                        order_type=OrderType.MARKET
+                        order_type=OrderType.MARKET,
+                        reason=f"空头止损({pnl_pct*100:.2f}%>={self.params['stop_loss']*100:.0f}%)"
+                    )
+                    self.entry_price = 0
+                    return
+                if pnl_pct <= -self.params['take_profit']:
+                    engine.submit_order(
+                        symbol='IF',
+                        side=OrderSide.BUY,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"空头止盈({pnl_pct*100:.2f}%<=-{self.params['take_profit']*100:.0f}%)"
                     )
                     self.entry_price = 0
                     return
@@ -160,13 +186,16 @@ class MACrossStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"均线金叉({self.params['fast_period']}/{self.params['slow_period']})，平空转多"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.BUY,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"均线金叉({self.params['fast_period']}/{self.params['slow_period']})，开多"
             )
             self.entry_price = current_price
             
@@ -176,13 +205,16 @@ class MACrossStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"均线死叉({self.params['fast_period']}/{self.params['slow_period']})，平多转空"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"均线死叉({self.params['fast_period']}/{self.params['slow_period']})，开空"
             )
             self.entry_price = current_price
 
@@ -238,7 +270,8 @@ class BollingerBandStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}跌破布林下轨{lower_band:.2f}，平空转多"
                 )
                 current_position = 0  # 更新本地持仓状态
             # 开多
@@ -246,7 +279,8 @@ class BollingerBandStrategy(Strategy):
                 symbol='IF',
                 side=OrderSide.BUY,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"价格{current_price:.2f}跌破布林下轨{lower_band:.2f}，开多"
             )
             
         elif current_price > upper_band and current_position >= 0:
@@ -256,7 +290,8 @@ class BollingerBandStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}突破布林上轨{upper_band:.2f}，平多转空"
                 )
                 current_position = 0  # 更新本地持仓状态
             # 开空
@@ -264,7 +299,8 @@ class BollingerBandStrategy(Strategy):
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"价格{current_price:.2f}突破布林上轨{upper_band:.2f}，开空"
             )
             
         # 回到中轨平仓
@@ -274,14 +310,16 @@ class BollingerBandStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}回归布林中轨{middle_band:.2f}，平多"
                 )
             else:
                 engine.submit_order(
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}回归布林中轨{middle_band:.2f}，平空"
                 )
 
 
@@ -352,13 +390,16 @@ class RSIMeanReversionStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"RSI={rsi:.1f}超卖(<{self.params['oversold']})，平空转多"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.BUY,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"RSI={rsi:.1f}超卖(<{self.params['oversold']})，开多"
             )
             
         elif rsi > self.params['overbought'] and current_position >= 0:
@@ -367,13 +408,16 @@ class RSIMeanReversionStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"RSI={rsi:.1f}超买(>{self.params['overbought']})，平多转空"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"RSI={rsi:.1f}超买(>{self.params['overbought']})，开空"
             )
 
 
@@ -425,13 +469,16 @@ class MomentumBreakoutStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}突破{self.params['lookback']}日高点{highest:.2f}，平空转多"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.BUY,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"价格{current_price:.2f}突破{self.params['lookback']}日高点{highest:.2f}，开多"
             )
             
         elif current_price < lowest and current_position >= 0:
@@ -440,13 +487,16 @@ class MomentumBreakoutStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.SELL,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"价格{current_price:.2f}跌破{self.params['lookback']}日低点{lowest:.2f}，平多转空"
                 )
+                current_position = 0
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"价格{current_price:.2f}跌破{self.params['lookback']}日低点{lowest:.2f}，开空"
             )
 
 
@@ -498,7 +548,8 @@ class OvernightLimitShortStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"空头止盈：最低价{bar_low:.2f}达开仓价{self.entry_price:.2f}的-{self.params['take_profit']*100:.0f}%"
                 )
                 self.entry_price = None
                 self.prev_close = current_price
@@ -510,7 +561,8 @@ class OvernightLimitShortStrategy(Strategy):
                     symbol='IF',
                     side=OrderSide.BUY,
                     quantity=abs(current_position),
-                    order_type=OrderType.MARKET
+                    order_type=OrderType.MARKET,
+                    reason=f"空头止损：最高价{bar_high:.2f}达开仓价{self.entry_price:.2f}的+{self.params['stop_loss']*100:.0f}%"
                 )
                 self.entry_price = None
                 self.prev_close = current_price
@@ -523,7 +575,8 @@ class OvernightLimitShortStrategy(Strategy):
                 symbol='IF',
                 side=OrderSide.SELL,
                 quantity=self.params['position_size'],
-                order_type=OrderType.MARKET
+                order_type=OrderType.MARKET,
+                reason=f"隔日高开：前收{self.prev_close:.2f}+{self.params['entry_pct']*100:.0f}%触发价{entry_price:.2f}，开空"
             )
             self.entry_price = entry_price
             self.prev_close = current_price

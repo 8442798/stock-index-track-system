@@ -693,12 +693,38 @@ class BacktestGUI:
             line = ax.axvline(idx, color='orange', linewidth=1.5, linestyle='--', alpha=0.9)
             self.kline_vlines[ax] = line
         
-        # 显示该K线信息
+        # 显示该K线信息及当日交易原因
         from visualization import kline_info_text
-        self.kline_info.config(text=kline_info_text(self.kline_data, idx))
+        text = kline_info_text(self.kline_data, idx)
+        day_trades = self._trades_on_kline(idx)
+        if day_trades:
+            text += "\n【当日交易】"
+            for t in day_trades:
+                reason = t.reason or "无"
+                text += f"\n  {t.action} @ {t.price:.2f} 手数{t.quantity} 原因: {reason}"
+        self.kline_info.config(text=text)
         
         if self.kline_canvas is not None:
             self.kline_canvas.draw_idle()
+    
+    def _trades_on_kline(self, idx):
+        """获取该K线当日的成交记录列表"""
+        if self.kline_data is None or not self.kline_trades:
+            return []
+        try:
+            bar_date = self.kline_data.iloc[idx]['date']
+            if hasattr(bar_date, 'date'):
+                bar_date = bar_date.date()
+            trades = []
+            for t in self.kline_trades:
+                tdate = t.timestamp
+                if hasattr(tdate, 'date'):
+                    tdate = tdate.date()
+                if tdate == bar_date:
+                    trades.append(t)
+            return trades
+        except Exception:
+            return []
     
     def _fit_kline_figure(self):
         """使matplotlib Figure适配容器尺寸"""
