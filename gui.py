@@ -595,34 +595,47 @@ class BacktestGUI:
         parent = self.kline_frame
         
         # 清除旧的canvas
-        old_canvas = getattr(self, 'kline_canvas', None)
-        if old_canvas:
-            old_canvas.get_tk_widget().destroy()
+        old_canvas_widget = getattr(self, 'kline_canvas_widget', None)
+        if old_canvas_widget:
+            old_canvas_widget.destroy()
         
         # 加载图片获取原始尺寸
         img = Image.open(image_path)
         self.kline_img = img
         
-        # 获取notebook的实际尺寸
-        canvas_width = max(self.notebook.winfo_width() - 30, 1000)
-        canvas_height = max(self.notebook.winfo_height() - 120, 600)
+        # 等待窗口更新以获取正确尺寸
+        parent.update_idletasks()
+        root_update = getattr(self, 'root', None)
+        if root_update:
+            root_update.update_idletasks()
+        
+        # 获取parent的尺寸，使用备用方案
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        
+        # 如果窗口未渲染，使用默认尺寸
+        if parent_width < 100:
+            parent_width = 800
+        if parent_height < 100:
+            parent_height = 500
         
         # 计算缩放比例
-        ratio = min(canvas_width / img.width, canvas_height / img.height)
+        ratio = min(parent_width / img.width, parent_height / img.height)
         new_width = int(img.width * ratio)
         new_height = int(img.height * ratio)
         
         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # 创建Canvas
+        # 使用grid布局创建Canvas
         canvas = tk.Canvas(parent, highlightthickness=0, width=new_width, height=new_height)
-        canvas.pack(fill=tk.BOTH, expand=True)
+        canvas.grid(row=1, column=0, sticky="nsew")
         
         photo = ImageTk.PhotoImage(img)
         canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         canvas.image = photo  # 保持引用
         
         self.kline_canvas = canvas
+        self.kline_canvas_widget = canvas
         self.kline_img_width = img.width
         self.kline_img_height = img.height
         
@@ -638,25 +651,29 @@ class BacktestGUI:
         data = self.kline_data
         n = len(data)
         
-        # 获取canvas尺寸
+        if n == 0:
+            return
+        
         canvas = event.widget
         canvas_width = canvas.winfo_width()
         canvas_height = canvas.winfo_height()
         
-        # 计算图片显示尺寸
-        img_width = self.kline_img_width
-        img_height = self.kline_img_height
-        
-        if not hasattr(self, 'kline_img') or self.kline_img is None:
+        # 如果canvas尺寸无效，忽略事件
+        if canvas_width < 10 or canvas_height < 10:
             return
         
         img = self.kline_img
+        if img is None or not hasattr(self, 'kline_img_width') or self.kline_img_width is None:
+            return
         
-        img_ratio = min(canvas_width / img.width, canvas_height / img.height)
-        display_width = int(img.width * img_ratio)
-        display_height = int(img.height * img_ratio)
+        img_width = self.kline_img_width
+        img_height = self.kline_img_height
         
         # 计算图片在canvas中的位置（居中）
+        img_ratio = min(canvas_width / img_width, canvas_height / img_height)
+        display_width = int(img_width * img_ratio)
+        display_height = int(img_height * img_ratio)
+        
         x_offset = (canvas_width - display_width) / 2
         y_offset = (canvas_height - display_height) / 2
         
@@ -744,13 +761,19 @@ class BacktestGUI:
         """窗口大小变化时重绘图表"""
         # 只处理主窗口大小变化
         if event.widget == self.root:
-            for chart_type in ["equity", "monthly", "drawdown", "trades", "kline"]:
+            for chart_type in ["equity", "monthly", "drawdown", "trades"]:
                 chart_path = getattr(self, f"chart_path_{chart_type}", None)
                 if chart_path and os.path.exists(chart_path):
                     label = getattr(self, f"chart_label_{chart_type}", None)
                     parent = label.master if label else None
                     if parent:
                         self._draw_chart(chart_type, parent, chart_path)
+            
+            # K线图单独处理
+            kline_path = getattr(self, 'chart_path_kline', None)
+            if kline_path and os.path.exists(kline_path):
+                if hasattr(self, 'kline_data') and self.kline_data is not None:
+                    self.display_interactive_kline(kline_path)
             
     def run_backtest(self):
         """运行回测"""
