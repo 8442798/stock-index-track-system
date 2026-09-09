@@ -275,6 +275,8 @@ class BacktestGUI:
         self.kline_vlines = {}
         self.kline_annotation = None
         self.kline_last_index = None      # 最后显示/悬停的K线索引
+        self.kline_active_index = None    # 当前已绘制标记的K线索引(避免同一根内重复重绘)
+        self._kline_redraw_job = None     # 整图重绘节流job
         self._kline_fit_size = (0, 0)
         self._kline_resize_job = None
         
@@ -706,18 +708,39 @@ class BacktestGUI:
         x = getattr(event, 'xdata', None)
         # 鼠标在图表区域外：保留数值栏，隐藏垂直线与注释
         if ax is None or x is None:
-            if not persist:
+            if not persist and self.kline_active_index is not None:
+                self.kline_active_index = None
                 self._clear_kline_markers()
             return
         idx = int(round(x))
         if idx < 0 or idx >= len(self.kline_data):
             return
         
+        # 更新数值栏（轻量tk更新，不触发重绘）
         self._update_kline_info_bar(idx)
-        self._set_kline_markers(idx, x, getattr(event, 'ydata', None), ax)
         
-        if self.kline_canvas is not None:
+        # 同一根K线内移动鼠标：仅刷新顶部数值栏，不重复整图重绘
+        if self.kline_active_index == idx:
+            return
+        
+        self.kline_active_index = idx
+        self._set_kline_markers(idx, x, getattr(event, 'ydata', None), ax)
+        self._request_kline_redraw()
+
+    def _request_kline_redraw(self):
+        """节流合并整图重绘：避免高频motion连续排队导致卡顿"""
+        if self.kline_canvas is None:
+            return
+        if self._kline_redraw_job is not None:
+            return  # 已排队，等待执行（期间的最新状态都会一并重绘）
+        self._kline_redraw_job = self.root.after(60, self._do_kline_redraw)
+
+    def _do_kline_redraw(self):
+        self._kline_redraw_job = None
+        try:
             self.kline_canvas.draw_idle()
+        except Exception:
+            pass
 
     def _ensure_kline_markers(self):
         """惰性创建垂直线与注释artist（复用，避免频繁重建）"""
@@ -758,8 +781,7 @@ class BacktestGUI:
                 self.kline_annotation.set_visible(False)
             except Exception:
                 pass
-        if self.kline_canvas is not None:
-            self.kline_canvas.draw_idle()
+        self._request_kline_redraw()
 
     def _set_kline_markers(self, idx, x_data, y_data, ax):
         """在指定K线处显示垂直线，并在鼠标附近显示该K线交易原因（若有）"""
