@@ -203,6 +203,7 @@ def main():
         print("  - rsi:        RSI均值回归策略")
         print("  - momentum:   动量突破策略")
         print("  - overnight_limit_short: 隔日极限做空策略")
+        print("  - four_day_flip:   4日翻转短线策略")
         return
     
     # 加载配置

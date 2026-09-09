@@ -82,7 +82,7 @@
 
 ## 四、策略模块 (strategies.py)
 
-### 4.1 策略列表（6个策略）
+### 4.1 策略列表（7个策略）
 
 #### 4.1.1 双均线策略 (DualMAStrategy)
 - 短期均线上穿长期均线做多
@@ -435,3 +435,4 @@ python main.py --config backtest_config.json
 - K线图交互：添加鼠标悬停显示详细信息功能
 - GUI优化：修复geometry manager混用问题
 - 文档同步：README.md、策略文档更新
+- 4日翻转短线策略：新增 four_day_flip 策略（连4阴/阳翻转 + 次日开盘入场）

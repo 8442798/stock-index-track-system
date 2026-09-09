@@ -24,6 +24,17 @@ python gui.py
 | rsi | RSI策略 | -2.40% |
 | momentum | 动量突破策略 | -2.67% |
 | overnight_limit_short | 隔日极限做空 | +12.08% |
+| four_day_flip | 4日翻转短线 | - |
+
+## 4日翻转短线策略 (four_day_flip)
+
+**规则：**
+- 连续4天阴线且累计跌幅 > 6%：下一交易日开盘开多仓
+- 连续4天阳线且累计涨幅 > 6%：下一交易日开盘开空仓
+- 止盈：盈利 8% 平仓
+- 止损：亏损达 2% 平仓
+
+**参数：** streak_days(4)、threshold(0.06)、take_profit(0.08)、stop_loss(0.02)
 
 ## 隔日极限做空策略
 
@@ -41,7 +52,7 @@ python gui.py
 ```
 ├── gui.py              # GUI界面（8个标签页）
 ├── engine.py           # 回测引擎
-├── strategies.py       # 6个策略实现
+├── strategies.py       # 7个策略实现
 ├── data_handler.py     # 数据获取（AKShare）
 ├── metrics.py          # 绩效指标计算
 ├── visualization.py    # 图表可视化（含K线图）

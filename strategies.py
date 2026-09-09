@@ -586,6 +586,155 @@ class OvernightLimitShortStrategy(Strategy):
         self.prev_close = current_price
 
 
+class FourDayFlipShortStrategy(Strategy):
+    """
+    4日翻转短线策略
+    1. 连续4天阴线且累计跌幅大于6%：下一交易日开盘开多仓
+    2. 连续4天阳线且累计涨幅大于6%：下一交易日开盘开空仓
+    3. 盈利8%平仓
+    4. 亏损达2%平仓
+    说明：连续阴/阳判定为当日收盘价相对前一日收盘价的涨跌方向，
+          累计涨跌幅 = (当日收盘/4日前的收盘) - 1
+    """
+
+    def __init__(self, params: Dict = None):
+        default_params = {
+            'position_size': 1,
+            'streak_days': 4,     # 连续涨/跌天数
+            'threshold': 0.06,    # 累计涨跌幅阈值 6%
+            'take_profit': 0.08,  # 止盈 8%
+            'stop_loss': 0.02     # 止损 2%
+        }
+        if params:
+            default_params.update(params)
+        super().__init__(default_params)
+
+        self.closes = []        # 历史收盘价
+        self.entry_price = None  # 开仓价
+        self.pending = None      # 待执行方向: 'long'/'short'（下一开盘执行）
+        self._execute_bar = False  # 是否已在开盘成交（防止同一根bar重复）
+
+    def _get_position(self, engine):
+        """从引擎获取当前持仓（正数=多头，负数=空头，0=空仓）"""
+        if engine.portfolio.positions:
+            pos = list(engine.portfolio.positions.values())[0]
+            return pos.quantity if pos.side.value == 'long' else -pos.quantity
+        return 0
+
+    def _is_4day_setup(self, days=None):
+        """判断最近streak_days是否全阳/全阴，返回 ('long'/'short'/None)
+        long  : 连续阴线且累计跌幅>阈值 → 开多
+        short : 连续阳线且累计涨幅>阈值 → 开空
+        """
+        streak = self.params['streak_days']
+        threshold = self.params['threshold']
+        n = len(self.closes)
+        if n < streak + 1:
+            return None
+        window = self.closes[-(streak + 1):]  # 最后 streak+1 个收盘
+        changes = [(window[i] - window[i - 1]) / window[i - 1] for i in range(1, len(window))]
+        if len(changes) != streak:
+            return None
+        cumulative = (window[-1] / window[0]) - 1
+        if all(c < 0 for c in changes) and cumulative <= -threshold:
+            return 'long'
+        if all(c > 0 for c in changes) and cumulative >= threshold:
+            return 'short'
+        return None
+
+    def on_bar(self, engine: BacktestEngine, bar: Dict):
+        current_price = bar['close']
+        bar_high = bar['high']
+        bar_low = bar['low']
+        self.closes.append(current_price)
+
+        current_position = self._get_position(engine)
+        streak = self.params['streak_days']
+        need_bars = streak + 1  # 需要足够历史判断连续走势
+
+        # 若当前bar已经开盘成交过，则不再做其它判断（仅一笔/bar）
+        if self._execute_bar:
+            self._execute_bar = False
+            return
+
+        # 持仓中：检查止盈止损
+        if current_position != 0 and self.entry_price is not None:
+            if current_position > 0:  # 多头
+                if bar_high >= self.entry_price * (1 + self.params['take_profit']):
+                    engine.submit_order(
+                        symbol='IF', side=OrderSide.SELL,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"多头止盈：最高{bar_high:.2f}达开仓价{self.entry_price:.2f}的+{self.params['take_profit']*100:.0f}%"
+                    )
+                    self.entry_price = None
+                    self.pending = None
+                    return
+                if bar_low <= self.entry_price * (1 - self.params['stop_loss']):
+                    engine.submit_order(
+                        symbol='IF', side=OrderSide.SELL,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"多头止损：最低{bar_low:.2f}达开仓价{self.entry_price:.2f}的-{self.params['stop_loss']*100:.0f}%"
+                    )
+                    self.entry_price = None
+                    self.pending = None
+                    return
+            else:  # 空头
+                if bar_low <= self.entry_price * (1 - self.params['take_profit']):
+                    engine.submit_order(
+                        symbol='IF', side=OrderSide.BUY,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"空头止盈：最低{bar_low:.2f}达开仓价{self.entry_price:.2f}的-{self.params['take_profit']*100:.0f}%"
+                    )
+                    self.entry_price = None
+                    self.pending = None
+                    return
+                if bar_high >= self.entry_price * (1 + self.params['stop_loss']):
+                    engine.submit_order(
+                        symbol='IF', side=OrderSide.BUY,
+                        quantity=abs(current_position),
+                        order_type=OrderType.MARKET,
+                        reason=f"空头止损：最高{bar_high:.2f}达开仓价{self.entry_price:.2f}的+{self.params['stop_loss']*100:.0f}%"
+                    )
+                    self.entry_price = None
+                    self.pending = None
+                    return
+
+        # 无持仓时处理待执行的信号（下一交易日开盘价成交）
+        if current_position == 0 and self.pending is not None:
+            direction = self.pending
+            self.pending = None
+            if direction == 'long':
+                order = engine.submit_order(
+                    symbol='IF', side=OrderSide.BUY,
+                    quantity=self.params['position_size'],
+                    order_type=OrderType.MARKET,
+                    reason="连续{}天阴线跌幅>{}%，次日开盘开多".format(
+                        streak, f"{self.params['threshold']*100:.0f}%"),
+                    use_open=True
+                )
+            else:
+                order = engine.submit_order(
+                    symbol='IF', side=OrderSide.SELL,
+                    quantity=self.params['position_size'],
+                    order_type=OrderType.MARKET,
+                    reason="连续{}天阳线涨幅>{}%，次日开盘开空".format(
+                        streak, f"{self.params['threshold']*100:.0f}%"),
+                    use_open=True
+                )
+            self.entry_price = order.filled_price if order.status == 'filled' else bar['open']
+            self._execute_bar = True
+            return
+
+        # 空仓且无待执行：检测信号，设置次日待执行
+        if current_position == 0 and len(self.closes) >= need_bars:
+            setup = self._is_4day_setup()
+            if setup == 'long' or setup == 'short':
+                self.pending = setup
+
+
 def get_strategy(strategy_name: str, params: Dict = None) -> Strategy:
     """
     工厂函数：根据策略名称返回策略实例
@@ -604,6 +753,7 @@ def get_strategy(strategy_name: str, params: Dict = None) -> Strategy:
         'rsi': RSIMeanReversionStrategy,
         'momentum': MomentumBreakoutStrategy,
         'overnight_limit_short': OvernightLimitShortStrategy,
+        'four_day_flip': FourDayFlipShortStrategy,
     }
     
     if strategy_name not in strategies:

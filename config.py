@@ -86,6 +86,15 @@ class StrategyConfig:
         'stop_loss': 0.02
     }
 
+    # 4日翻转短线策略
+    FOUR_DAY_FLIP = {
+        'position_size': 1,
+        'streak_days': 4,     # 连续涨/跌天数
+        'threshold': 0.06,    # 累计涨跌幅阈值 6%
+        'take_profit': 0.08,  # 止盈 8%
+        'stop_loss': 0.02     # 止损 2%
+    }
+
 
 # 默认配置
 DEFAULT_CONFIG = BacktestConfig()

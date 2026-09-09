@@ -201,9 +201,20 @@ class BacktestEngine:
         quantity: int,
         price: float = None,
         order_type: OrderType = OrderType.MARKET,
-        reason: str = ""
+        reason: str = "",
+        use_open: bool = False
     ) -> Order:
-        """提交订单"""
+        """提交订单
+
+        Args:
+            symbol: 合约代码
+            side: 买卖方向
+            quantity: 数量
+            price: 限价单价格
+            order_type: 市价/限价
+            reason: 交易原因
+            use_open: 市价单是否按当前bar开盘价成交（默认收盘价），用于"次日开盘成交"
+        """
         # 检查年度交易次数限制
         if self.current_timestamp is not None:
             trade_year = self.current_timestamp.year if hasattr(self.current_timestamp, 'year') else None
@@ -244,14 +255,22 @@ class BacktestEngine:
         
         # 模拟成交
         if self.current_bar_index < len(self.data):
-            fill_price = self.get_current_price()
             if order_type == OrderType.LIMIT:
-                if side == OrderSide.BUY and price >= fill_price:
+                # 限价单以当前收盘价为基准判断是否触发
+                base_price = self.get_current_price()
+                if side == OrderSide.BUY and price >= base_price:
                     fill_price = price
-                elif side == OrderSide.SELL and price <= fill_price:
+                elif side == OrderSide.SELL and price <= base_price:
                     fill_price = price
                 else:
                     return order  # 未成交
+            else:
+                # 市价单：use_open=True按当前bar开盘价成交，否则按收盘价
+                if use_open:
+                    bar = self.data.iloc[self.current_bar_index]
+                    fill_price = float(bar['open'])
+                else:
+                    fill_price = self.get_current_price()
             
             # 加入滑点
             if side == OrderSide.BUY:

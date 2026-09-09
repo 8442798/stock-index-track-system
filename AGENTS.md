@@ -38,7 +38,7 @@ python main.py --strategy bollinger --symbol IF0 --start 2025-09-01 --end 2026-0
 | `main.py` | CLI 入口，无头回测 | `run_backtest()`, `main()` |
 | `gui.py` | tkinter GUI，8 个标签页 | `BacktestGUI` |
 | `engine.py` | 回测引擎核心 | `Order/Position/Trade/Portfolio/BacktestEngine/Strategy` |
-| `strategies.py` | 6 个策略实现 | `get_strategy()` 工厂 + 各 Strategy 类 |
+| `strategies.py` | 7 个策略实现 | `get_strategy()` 工厂 + 各 Strategy 类 |
 | `data_handler.py` | 多数据源 | `AKShareDataHandler/TushareDataHandler/CSVDataHandler`, `get_data_handler()` |
 | `metrics.py` | 绩效指标 | `PerformanceMetrics/PerformanceAnalyzer` |
 | `visualization.py` | 图表生成 | `Visualizer`, `create_interactive_kline()`, `on_kline_motion()` |
