@@ -20,7 +20,7 @@ from data_handler import get_data_handler
 from engine import BacktestEngine
 from strategies import get_strategy
 from metrics import PerformanceAnalyzer
-from visualization import Visualizer, create_interactive_kline, on_kline_motion
+from visualization import Visualizer, create_interactive_kline
 
 
 class BacktestGUI:
@@ -234,11 +234,26 @@ class BacktestGUI:
         kline_frame.columnconfigure(0, weight=1)
         kline_frame.rowconfigure(1, weight=1)
         
-        # 悬停信息标签（顶部，grid第0行）
-        self.kline_info = tk.Label(kline_frame, text="", font=("Consolas", 10),
-                                       fg="blue", bg="#f0f0f0", relief=tk.SUNKEN,
-                                       anchor=tk.W, padx=5, pady=2)
-        self.kline_info.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        # 悬停信息栏（顶部，grid第0行）：固定字段名，仅数值动态变化
+        self.kline_info_bar = tk.Frame(kline_frame, bg="#f0f0f0", relief=tk.SUNKEN, bd=1)
+        self.kline_info_bar.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        
+        # 字段定义: (字段名, 显示宽度, 背景)
+        kline_fields = [
+            ("日期", 11), ("开盘", 9), ("最高", 9), ("最低", 9),
+            ("收盘", 9), ("涨跌", 11), ("成交量", 11), ("振幅", 9),
+        ]
+        self.kline_info_labels = {}   # 字段名 -> 值Label
+        for i, (name, width) in enumerate(kline_fields):
+            row, col = divmod(i, 4)
+            cell = tk.Frame(self.kline_info_bar, bg="#f0f0f0")
+            cell.grid(row=row, column=col, sticky="w", padx=(0, 18), pady=1)
+            tk.Label(cell, text=name, font=("Microsoft YaHei", 9),
+                     bg="#f0f0f0", fg="#888888").pack(side=tk.LEFT)
+            val = tk.Label(cell, text="--", font=("Consolas", 10),
+                           bg="#f0f0f0", fg="#333333", width=width, anchor="w")
+            val.pack(side=tk.LEFT)
+            self.kline_info_labels[name] = val
         
         # 图表容器（grid第1行，内嵌matplotlib Figure）
         self.kline_chart_frame = tk.Frame(kline_frame, bg="white")
@@ -259,6 +274,7 @@ class BacktestGUI:
         self.kline_fig = None
         self.kline_vlines = {}
         self.kline_annotation = None
+        self.kline_last_index = None      # 最后显示/悬停的K线索引
         self._kline_fit_size = (0, 0)
         self._kline_resize_job = None
         
@@ -665,13 +681,61 @@ class BacktestGUI:
         widget.grid(row=0, column=0, sticky="nsew")
         
         # 事件绑定
-        canvas.mpl_connect('motion_notify_event',
-                           lambda e: on_kline_motion(e, data, self.kline_info))
+        canvas.mpl_connect('motion_notify_event', self._on_kline_hover)
         canvas.mpl_connect('button_press_event', self._on_kline_click)
         
         canvas.draw()
         # 自适应初始尺寸
         self.root.after(50, self._fit_kline_figure)
+    
+    def _on_kline_hover(self, event):
+        """鼠标悬停K线：更新顶部数值栏，移出图外时保留最后显示的数字"""
+        if self.kline_data is None or self.kline_data.empty:
+            return
+        x = getattr(event, 'xdata', None)
+        if x is None:
+            return  # 移出图外：不更新，保留最后数字
+        idx = int(round(x))
+        if idx < 0 or idx >= len(self.kline_data):
+            return
+        self._update_kline_info_bar(idx)
+    
+    def _update_kline_info_bar(self, idx):
+        """仅更新K线信息栏中的数值，字段名固定"""
+        if self.kline_data is None or idx < 0 or idx >= len(self.kline_data):
+            return
+        data = self.kline_data
+        labels = self.kline_info_labels
+        row = data.iloc[idx]
+        date_val = row['date']
+        date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)
+        
+        open_p = row['open']
+        high = row['high']
+        low = row['low']
+        close = row['close']
+        volume = row['volume']
+        
+        # 涨跌额/幅（相对昨收）
+        prev_close = data.iloc[idx - 1]['close'] if idx > 0 else open_p
+        change = close - prev_close
+        change_pct = change / prev_close * 100 if prev_close != 0 else 0
+        change_color = "#d32f2f" if change >= 0 else "#388e3c"
+        change_text = f"{change:+.2f}({change_pct:+.2f}%)" if change != 0 else f"{change:.2f}(0.00%)"
+        
+        # 振幅 = (最高-最低)/昨收*100
+        amplitude = (high - low) / prev_close * 100 if prev_close != 0 else 0
+        
+        labels['日期'].config(text=date_str)
+        labels['开盘'].config(text=f"{open_p:.2f}")
+        labels['最高'].config(text=f"{high:.2f}")
+        labels['最低'].config(text=f"{low:.2f}")
+        labels['收盘'].config(text=f"{close:.2f}")
+        labels['成交量'].config(text=f"{volume:,.0f}")
+        labels['振幅'].config(text=f"{amplitude:.2f}%")
+        labels['涨跌'].config(text=change_text, fg=change_color)
+        
+        self.kline_last_index = idx
     
     def _on_kline_click(self, event):
         """鼠标左键点击K线：显示/更新一条垂直线，并在鼠标附近展示当日交易原因"""
@@ -682,6 +746,9 @@ class BacktestGUI:
         idx = int(round(event.xdata))
         if idx < 0 or idx >= len(self.kline_data):
             return
+        
+        # 更新顶部数值栏
+        self._update_kline_info_bar(idx)
         
         # 清除旧的垂直线与注释
         for ax, line in self.kline_vlines.items():
@@ -702,10 +769,6 @@ class BacktestGUI:
         for ax in (ax1, ax2):
             line = ax.axvline(idx, color='orange', linewidth=1.5, linestyle='--', alpha=0.9)
             self.kline_vlines[ax] = line
-        
-        # 更新顶部信息栏（K线详情）
-        from visualization import kline_info_text
-        self.kline_info.config(text=kline_info_text(self.kline_data, idx))
         
         # 当日交易原因：在鼠标附近用注释框显示
         day_trades = self._trades_on_kline(idx)
