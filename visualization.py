@@ -271,7 +271,9 @@ class Visualizer:
         data: pd.DataFrame,
         trades: List = None,
         title: str = "日K线图",
-        save_path: str = None
+        save_path: str = None,
+        strategy_name: str = None,
+        strategy_params: Dict = None
     ):
         """
         绘制日K线图，标记买卖交易点
@@ -281,6 +283,8 @@ class Visualizer:
             trades: 交易记录列表
             title: 图表标题
             save_path: 保存路径
+            strategy_name: 策略名称
+            strategy_params: 策略参数
         """
         if data is None or data.empty:
             return None
@@ -310,6 +314,30 @@ class Visualizer:
             # 上下影线
             ax1.plot([i, i], [body_high, row['high']], color=color, linewidth=0.8)
             ax1.plot([i, i], [body_low, row['low']], color=color, linewidth=0.8)
+        
+        # 绘制布林带（布林策略时显示）
+        if strategy_name == 'bollinger' and strategy_params:
+            window = strategy_params.get('window', 20)
+            num_std = strategy_params.get('num_std', 2)
+            
+            if len(data) >= window:
+                # 计算布林带
+                data['bb_middle'] = data['close'].rolling(window=window).mean()
+                data['bb_std'] = data['close'].rolling(window=window).std()
+                data['bb_upper'] = data['bb_middle'] + num_std * data['bb_std']
+                data['bb_lower'] = data['bb_middle'] - num_std * data['bb_std']
+                
+                # 绘制布林带
+                ax1.plot(dates, data['bb_middle'], color='blue', linewidth=1.5, 
+                        label=f'中轨(MA{window})', alpha=0.8)
+                ax1.plot(dates, data['bb_upper'], color='red', linewidth=1, 
+                        label=f'上轨(+{num_std}σ)', linestyle='--', alpha=0.8)
+                ax1.plot(dates, data['bb_lower'], color='green', linewidth=1, 
+                        label=f'下轨(-{num_std}σ)', linestyle='--', alpha=0.8)
+                
+                # 填充布林带区域
+                ax1.fill_between(dates, data['bb_lower'], data['bb_upper'], 
+                               alpha=0.1, color='blue')
         
         # 标记交易点
         if trades:
@@ -422,7 +450,9 @@ class Visualizer:
         benchmark_df: pd.DataFrame = None,
         prefix: str = "backtest",
         kline_data: pd.DataFrame = None,
-        symbol: str = ""
+        symbol: str = "",
+        strategy_name: str = None,
+        strategy_params: Dict = None
     ) -> Dict[str, str]:
         """
         生成所有图表
@@ -465,7 +495,9 @@ class Visualizer:
                 kline_data,
                 trades,
                 title=title,
-                save_path=os.path.join(self.output_dir, f'{prefix}_kline.png')
+                save_path=os.path.join(self.output_dir, f'{prefix}_kline.png'),
+                strategy_name=strategy_name,
+                strategy_params=strategy_params
             )
         
         return charts

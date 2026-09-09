@@ -707,7 +707,9 @@ class BacktestGUI:
                 engine.portfolio.trades,
                 prefix=config.strategy_name,
                 kline_data=data,
-                symbol=config.symbol
+                symbol=config.symbol,
+                strategy_name=config.strategy_name,
+                strategy_params=config.strategy_params
             )
             self.root.after(0, lambda: self.progress.configure(value=95))
             
