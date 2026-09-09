@@ -689,16 +689,109 @@ class BacktestGUI:
         self.root.after(50, self._fit_kline_figure)
     
     def _on_kline_hover(self, event):
-        """鼠标悬停K线：更新顶部数值栏，移出图外时保留最后显示的数字"""
-        if self.kline_data is None or self.kline_data.empty:
+        """鼠标悬停K线：显示垂直线、更新数值栏；若该K线有交易则显示交易原因"""
+        self._handle_kline_cursor(event)
+
+    def _on_kline_click(self, event):
+        """鼠标左键点击K线：固定当前K线的垂直线与交易原因显示"""
+        if event.button != 1:
             return
+        self._handle_kline_cursor(event, persist=True)
+
+    def _handle_kline_cursor(self, event, persist=False):
+        """处理K线光标移动/点击：更新垂直线、数值栏与交易原因注释框"""
+        if self.kline_fig is None or self.kline_data is None or self.kline_data.empty:
+            return
+        ax = event.inaxes
         x = getattr(event, 'xdata', None)
-        if x is None:
-            return  # 移出图外：不更新，保留最后数字
+        # 鼠标在图表区域外：保留数值栏，隐藏垂直线与注释
+        if ax is None or x is None:
+            if not persist:
+                self._clear_kline_markers()
+            return
         idx = int(round(x))
         if idx < 0 or idx >= len(self.kline_data):
             return
+        
         self._update_kline_info_bar(idx)
+        self._set_kline_markers(idx, x, getattr(event, 'ydata', None), ax)
+        
+        if self.kline_canvas is not None:
+            self.kline_canvas.draw_idle()
+
+    def _ensure_kline_markers(self):
+        """惰性创建垂直线与注释artist（复用，避免频繁重建）"""
+        if self.kline_fig is None or not self.kline_axes:
+            return False
+        if not self.kline_vlines:
+            ax1, ax2 = self.kline_axes
+            for ax in (ax1, ax2):
+                line = ax.axvline(0, color='orange', linewidth=1.5,
+                                  linestyle='--', alpha=0.9)
+                line.set_visible(False)
+                self.kline_vlines[ax] = line
+        if self.kline_annotation is None:
+            ax1, _ = self.kline_axes
+            ann = ax1.annotate(
+                "", xy=(0, 0), xytext=(12, -6), textcoords="offset points",
+                fontsize=9, ha="left", va="top",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="#fff9c4",
+                          edgecolor="#f57f17", alpha=0.95),
+                arrowprops=dict(arrowstyle="-", color="#f57f17", lw=1),
+                zorder=10
+            )
+            ann.set_visible(False)
+            self.kline_annotation = ann
+        return True
+
+    def _clear_kline_markers(self):
+        """隐藏垂直线与注释（保留数值栏最后显示）"""
+        if not self.kline_vlines and self.kline_annotation is None:
+            return
+        for ax, line in self.kline_vlines.items():
+            try:
+                line.set_visible(False)
+            except Exception:
+                pass
+        if self.kline_annotation is not None:
+            try:
+                self.kline_annotation.set_visible(False)
+            except Exception:
+                pass
+        if self.kline_canvas is not None:
+            self.kline_canvas.draw_idle()
+
+    def _set_kline_markers(self, idx, x_data, y_data, ax):
+        """在指定K线处显示垂直线，并在鼠标附近显示该K线交易原因（若有）"""
+        if not self._ensure_kline_markers():
+            return
+        # 垂直线
+        for a, line in self.kline_vlines.items():
+            try:
+                line.set_xdata([idx, idx])
+                line.set_visible(True)
+            except Exception:
+                pass
+        # 注释
+        day_trades = self._trades_on_kline(idx)
+        ann = self.kline_annotation
+        if day_trades and ann is not None:
+            # 将鼠标坐标换算到价格子图坐标（注释画在价格子图上）
+            ax1, ax2 = self.kline_axes
+            if ax is ax2:
+                px, py = ax2.transData.transform((x_data, y_data))
+                x1, y1 = ax1.transData.inverted().transform((px, py))
+            else:
+                x1, y1 = x_data, y_data
+            lines = []
+            for tr in day_trades:
+                lines.append(f"{tr.action} {tr.quantity}手 @ {tr.price:.2f}")
+                lines.append(f"  原因: {tr.reason or '无'}")
+            ann.xy = (x1, y1)
+            ann.set_text("\n".join(lines))
+            ann.set_visible(True)
+        elif ann is not None:
+            ann.set_visible(False)
     
     def _update_kline_info_bar(self, idx):
         """仅更新K线信息栏中的数值，字段名固定"""
@@ -736,64 +829,6 @@ class BacktestGUI:
         labels['涨跌'].config(text=change_text, fg=change_color)
         
         self.kline_last_index = idx
-    
-    def _on_kline_click(self, event):
-        """鼠标左键点击K线：显示/更新一条垂直线，并在鼠标附近展示当日交易原因"""
-        if self.kline_fig is None or event.xdata is None or event.inaxes is None:
-            return
-        if event.button != 1:
-            return
-        idx = int(round(event.xdata))
-        if idx < 0 or idx >= len(self.kline_data):
-            return
-        
-        # 更新顶部数值栏
-        self._update_kline_info_bar(idx)
-        
-        # 清除旧的垂直线与注释
-        for ax, line in self.kline_vlines.items():
-            try:
-                line.remove()
-            except Exception:
-                pass
-        self.kline_vlines = {}
-        if self.kline_annotation is not None:
-            try:
-                self.kline_annotation.remove()
-            except Exception:
-                pass
-            self.kline_annotation = None
-        
-        # 在价格与成交量两个子图各画一条垂直线
-        ax1, ax2 = self.kline_axes
-        for ax in (ax1, ax2):
-            line = ax.axvline(idx, color='orange', linewidth=1.5, linestyle='--', alpha=0.9)
-            self.kline_vlines[ax] = line
-        
-        # 当日交易原因：在鼠标附近用注释框显示
-        day_trades = self._trades_on_kline(idx)
-        if day_trades:
-            lines = []
-            for tr in day_trades:
-                lines.append(f"{tr.action} {tr.quantity}手 @ {tr.price:.2f}")
-                lines.append(f"  原因: {tr.reason or '无'}")
-            ann_text = "\n".join(lines)
-            # 使用点击时的鼠标位置（数据坐标）
-            x, y = event.xdata, event.ydata
-            # 注释框放在价格子图上，若点击成交量子图则映射到价格子图同x位置
-            ax_ann = ax1 if event.inaxes is ax2 else event.inaxes
-            self.kline_annotation = ax_ann.annotate(
-                ann_text, xy=(x, y),
-                xytext=(12, -6), textcoords="offset points",
-                fontsize=9, ha="left", va="top",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="#fff9c4",
-                          edgecolor="#f57f17", alpha=0.95),
-                arrowprops=dict(arrowstyle="-", color="#f57f17", lw=1),
-                zorder=10
-            )
-        
-        if self.kline_canvas is not None:
-            self.kline_canvas.draw_idle()
     
     def _trades_on_kline(self, idx):
         """获取该K线当日的成交记录列表"""
