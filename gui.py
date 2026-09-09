@@ -9,6 +9,9 @@ import sys
 from datetime import datetime
 from PIL import Image, ImageTk
 import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -228,6 +231,8 @@ class BacktestGUI:
         kline_frame = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(kline_frame, text="K线图")
         self.kline_frame = kline_frame
+        kline_frame.columnconfigure(0, weight=1)
+        kline_frame.rowconfigure(1, weight=1)
         
         # 悬停信息标签（顶部，grid第0行）
         self.kline_info = tk.Label(kline_frame, text="", font=("Consolas", 10),
@@ -235,8 +240,26 @@ class BacktestGUI:
                                        anchor=tk.W, padx=5, pady=2)
         self.kline_info.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         
-        # 图表区域（grid第1行）
-        self.create_chart_tab(kline_frame, "kline", row=1)
+        # 图表容器（grid第1行，内嵌matplotlib Figure）
+        self.kline_chart_frame = tk.Frame(kline_frame, bg="white")
+        self.kline_chart_frame.grid(row=1, column=0, sticky="nsew")
+        self.kline_chart_frame.columnconfigure(0, weight=1)
+        self.kline_chart_frame.rowconfigure(0, weight=1)
+        
+        self.kline_placeholder = tk.Label(self.kline_chart_frame, text="暂无图表，请先运行回测",
+                                          font=("Arial", 12), foreground="gray", bg="white")
+        self.kline_placeholder.grid(row=0, column=0, sticky="nsew")
+        
+        # 交互状态
+        self.kline_data = None
+        self.kline_trades = []
+        self.kline_strategy_name = None
+        self.kline_strategy_params = None
+        self.kline_canvas = None
+        self.kline_fig = None
+        self.kline_vlines = {}
+        self._kline_fit_size = (0, 0)
+        self._kline_resize_job = None
         
         # 标签页7: 交易记录
         records_frame = ttk.Frame(self.notebook, padding=10)
@@ -567,11 +590,11 @@ class BacktestGUI:
         # 保存图表路径用于窗口大小变化时重绘
         setattr(self, f"chart_path_{chart_type}", image_path)
         
-        # K线图使用交互式显示
+        # K线图使用交互式matplotlib Figure
         if chart_type == "kline":
             if kline_data is not None:
                 self.kline_data = kline_data
-            self.display_interactive_kline(image_path)
+            self._show_kline_figure()
             return
         
         # 先获取父容器
@@ -590,138 +613,110 @@ class BacktestGUI:
             
         self._draw_chart(chart_type, parent, image_path)
     
-    def display_interactive_kline(self, image_path):
-        """显示交互式K线图，支持鼠标悬停"""
-        parent = self.kline_frame
+    def _show_kline_figure(self):
+        """内嵌matplotlib交互式K线图：支持悬停信息、左键点击显示垂直线、窗口自适应"""
+        # 清理旧figure
+        if self.kline_fig is not None:
+            try:
+                plt.close(self.kline_fig)
+            except Exception:
+                pass
+            self.kline_fig = None
+        if self.kline_canvas is not None:
+            try:
+                self.kline_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.kline_canvas = None
         
-        # 清除旧的canvas
-        old_canvas_widget = getattr(self, 'kline_canvas_widget', None)
-        if old_canvas_widget:
-            old_canvas_widget.destroy()
-        
-        # 加载图片获取原始尺寸
-        img = Image.open(image_path)
-        self.kline_img = img
-        
-        # 等待窗口更新以获取正确尺寸
-        parent.update_idletasks()
-        root_update = getattr(self, 'root', None)
-        if root_update:
-            root_update.update_idletasks()
-        
-        # 获取parent的尺寸，使用备用方案
-        parent_width = parent.winfo_width()
-        parent_height = parent.winfo_height()
-        
-        # 如果窗口未渲染，使用默认尺寸
-        if parent_width < 100:
-            parent_width = 800
-        if parent_height < 100:
-            parent_height = 500
-        
-        # 计算缩放比例
-        ratio = min(parent_width / img.width, parent_height / img.height)
-        new_width = int(img.width * ratio)
-        new_height = int(img.height * ratio)
-        
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # 使用grid布局创建Canvas
-        canvas = tk.Canvas(parent, highlightthickness=0, width=new_width, height=new_height)
-        canvas.grid(row=1, column=0, sticky="nsew")
-        
-        photo = ImageTk.PhotoImage(img)
-        canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-        canvas.image = photo  # 保持引用
-        
-        self.kline_canvas = canvas
-        self.kline_canvas_widget = canvas
-        self.kline_img_width = img.width
-        self.kline_img_height = img.height
-        
-        # 绑定鼠标悬停事件
-        canvas.bind("<Motion>", self._on_kline_hover)
-        canvas.bind("<Leave>", self._on_kline_leave)
-    
-    def _on_kline_hover(self, event):
-        """鼠标悬停在K线图上时"""
-        if not hasattr(self, 'kline_data') or self.kline_data is None:
-            return
+        # 占位文本恢复
+        for child in self.kline_chart_frame.winfo_children():
+            child.destroy()
+        self.kline_placeholder = tk.Label(self.kline_chart_frame, text="暂无图表，请先运行回测",
+                                          font=("Arial", 12), foreground="gray", bg="white")
+        self.kline_placeholder.grid(row=0, column=0, sticky="nsew")
         
         data = self.kline_data
-        n = len(data)
-        
-        if n == 0:
+        if data is None or data.empty:
             return
         
-        canvas = event.widget
-        canvas_width = canvas.winfo_width()
-        canvas_height = canvas.winfo_height()
-        
-        # 如果canvas尺寸无效，忽略事件
-        if canvas_width < 10 or canvas_height < 10:
+        # 创建Figure
+        try:
+            fig, ax1, ax2 = create_interactive_kline(
+                data.copy(),
+                trades=self.kline_trades or [],
+                strategy_name=self.kline_strategy_name,
+                strategy_params=self.kline_strategy_params
+            )
+        except Exception as e:
+            self.log(f"K线图创建失败: {e}")
             return
         
-        img = self.kline_img
-        if img is None or not hasattr(self, 'kline_img_width') or self.kline_img_width is None:
-            return
+        self.kline_fig = fig
+        self.kline_axes = (ax1, ax2)
+        self.kline_vlines = {}
         
-        img_width = self.kline_img_width
-        img_height = self.kline_img_height
+        # 嵌入tkinter
+        canvas = FigureCanvasTkAgg(fig, master=self.kline_chart_frame)
+        self.kline_canvas = canvas
+        widget = canvas.get_tk_widget()
+        widget.grid(row=0, column=0, sticky="nsew")
         
-        # 计算图片在canvas中的位置（居中）
-        img_ratio = min(canvas_width / img_width, canvas_height / img_height)
-        display_width = int(img_width * img_ratio)
-        display_height = int(img_height * img_ratio)
+        # 事件绑定
+        canvas.mpl_connect('motion_notify_event',
+                           lambda e: on_kline_motion(e, data, self.kline_info))
+        canvas.mpl_connect('button_press_event', self._on_kline_click)
         
-        x_offset = (canvas_width - display_width) / 2
-        y_offset = (canvas_height - display_height) / 2
-        
-        mouse_x = event.x - x_offset
-        mouse_y = event.y - y_offset
-        
-        if mouse_x < 0 or mouse_x > display_width or mouse_y < 0 or mouse_y > display_height:
-            self.kline_info.config(text="")
-            return
-        
-        # 将鼠标位置映射到K线索引
-        kline_index = int(mouse_x / display_width * n)
-        if kline_index >= n:
-            kline_index = n - 1
-        if kline_index < 0:
-            self.kline_info.config(text="")
-            return
-        
-        # 获取K线数据
-        row = data.iloc[kline_index]
-        date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
-        open_p = row['open']
-        high = row['high']
-        low = row['low']
-        close = row['close']
-        volume = row['volume']
-        
-        # 计算振幅
-        prev_close = data.iloc[kline_index - 1]['close'] if kline_index > 0 else close
-        amplitude = (high - low) / prev_close * 100 if prev_close != 0 else 0
-        
-        # 涨跌
-        change = close - open_p
-        change_pct = change / open_p * 100 if open_p != 0 else 0
-        if change >= 0:
-            change_str = f"{change:+.2f} ({change_pct:+.2f}%)"
-        else:
-            change_str = f"{change:.2f} ({change_pct:.2f}%)"
-        
-        info_text = (
-            f" 日期: {date_str} | 开盘: {open_p:.2f} | 最高: {high:.2f} | 最低: {low:.2f} | "
-            f"收盘: {close:.2f} | 成交量: {volume:,.0f} | 振幅: {amplitude:.2f}% | 涨跌: {change_str}"
-        )
-        self.kline_info.config(text=info_text)
+        canvas.draw()
+        # 自适应初始尺寸
+        self.root.after(50, self._fit_kline_figure)
     
-    def _on_kline_leave(self, event):
-        """鼠标离开K线图时"""
-        self.kline_info.config(text="")
+    def _on_kline_click(self, event):
+        """鼠标左键点击K线：显示/更新一条垂直线，并展示该K线信息"""
+        if self.kline_fig is None or event.xdata is None or event.inaxes is None:
+            return
+        idx = int(round(event.xdata))
+        if idx < 0 or idx >= len(self.kline_data):
+            return
+        
+        # 清除旧的垂直线
+        for ax, line in self.kline_vlines.items():
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self.kline_vlines = {}
+        
+        # 在价格与成交量两个子图各画一条垂直线
+        ax1, ax2 = self.kline_axes
+        for ax in (ax1, ax2):
+            line = ax.axvline(idx, color='orange', linewidth=1.5, linestyle='--', alpha=0.9)
+            self.kline_vlines[ax] = line
+        
+        # 显示该K线信息
+        from visualization import kline_info_text
+        self.kline_info.config(text=kline_info_text(self.kline_data, idx))
+        
+        if self.kline_canvas is not None:
+            self.kline_canvas.draw_idle()
+    
+    def _fit_kline_figure(self):
+        """使matplotlib Figure适配容器尺寸"""
+        if self.kline_fig is None or self.kline_canvas is None:
+            return
+        try:
+            w = self.kline_chart_frame.winfo_width()
+            h = self.kline_chart_frame.winfo_height()
+            if w < 100 or h < 100:
+                return
+            dpi = self.kline_fig.dpi
+            # 仅当尺寸变化显著时重设，避免循环抖动
+            if abs(self.kline_fig.get_figwidth() * dpi - w) > 8 or abs(self.kline_fig.get_figheight() * dpi - h) > 8:
+                self.kline_fig.set_size_inches(w / dpi, h / dpi, forward=False)
+                self.kline_fig.tight_layout()
+                self.kline_canvas.draw_idle()
+        except Exception:
+            pass
         
     def _draw_chart(self, chart_type, parent, image_path):
         """绘制图表到canvas"""
@@ -769,11 +764,9 @@ class BacktestGUI:
                     if parent:
                         self._draw_chart(chart_type, parent, chart_path)
             
-            # K线图单独处理
-            kline_path = getattr(self, 'chart_path_kline', None)
-            if kline_path and os.path.exists(kline_path):
-                if hasattr(self, 'kline_data') and self.kline_data is not None:
-                    self.display_interactive_kline(kline_path)
+            # K线图自适应重绘
+            if hasattr(self, 'kline_canvas') and self.kline_canvas is not None:
+                self.root.after(80, self._fit_kline_figure)
             
     def run_backtest(self):
         """运行回测"""
@@ -869,7 +862,9 @@ class BacktestGUI:
             
             # 保存K线数据用于交互式显示
             self.kline_data = data
-            
+            self.kline_trades = engine.portfolio.trades
+            self.kline_strategy_name = config.strategy_name
+            self.kline_strategy_params = config.strategy_params
             self.root.after(0, lambda: self.progress.configure(value=95))
             
             # 7. 更新界面（在主线程中）

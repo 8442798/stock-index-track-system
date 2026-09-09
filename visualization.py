@@ -147,7 +147,7 @@ def create_interactive_kline(data, trades=None, strategy_name=None, strategy_par
     
     plt.tight_layout()
     
-    return fig, ax1
+    return fig, ax1, ax2
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
@@ -641,22 +641,10 @@ class Visualizer:
         return charts
 
 
-def on_kline_motion(event, data, info_label):
-    """鼠标悬停K线时的回调函数"""
-    if event.inaxes is None:
-        info_label.config(text="")
-        return
-    
-    ax = event.inaxes
-    # 获取鼠标位置对应的K线索引
-    x = event.xdata
-    if x is None or x < 0 or x >= len(data):
-        info_label.config(text="")
-        return
-    
-    idx = int(round(x))
-    if idx >= len(data):
-        idx = len(data) - 1
+def kline_info_text(data: pd.DataFrame, idx: int) -> str:
+    """生成某根K线的详细信息文本"""
+    if idx < 0 or idx >= len(data):
+        return ""
     
     row = data.iloc[idx]
     date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
@@ -676,9 +664,27 @@ def on_kline_motion(event, data, info_label):
     color = '#d32f2f' if change >= 0 else '#388e3c'
     change_str = f"{change:+.2f} ({change_pct:+.2f}%)" if change >= 0 else f"{change:.2f} ({change_pct:.2f}%)"
     
-    info_text = (
+    return (
         f"日期: {date_str}  |  开盘: {open_p:.2f}  |  最高: {high:.2f}  |  最低: {low:.2f}  "
         f"|  收盘: {close:.2f}  |  成交量: {volume:,.0f}  |  振幅: {amplitude:.2f}%\n"
         f"涨跌: {change_str}"
     )
-    info_label.config(text=info_text)
+
+
+def on_kline_motion(event, data, info_label):
+    """鼠标悬停K线时的回调函数"""
+    if event.inaxes is None:
+        info_label.config(text="")
+        return
+    
+    # 获取鼠标位置对应的K线索引
+    x = event.xdata
+    if x is None or x < 0 or x >= len(data):
+        info_label.config(text="")
+        return
+    
+    idx = int(round(x))
+    if idx >= len(data):
+        idx = len(data) - 1
+    
+    info_label.config(text=kline_info_text(data, idx))
