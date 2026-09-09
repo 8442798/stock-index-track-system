@@ -258,20 +258,19 @@ class BacktestEngine:
                 fill_price -= self.slippage
             
             # 判断开平仓动作
-            action = ""
+            # 关键：检查订单是否会翻转持仓方向，而非简单看当前持仓
+            # 如果当前无持仓，任何方向的订单都是开仓
+            # 如果当前有持仓且方向相同，是加仓（视为开仓）
+            # 如果当前有持仓且方向相反，是平仓
             pos = self.portfolio.positions.get(symbol)
             if side == OrderSide.BUY:
-                if pos and pos.side == PositionSide.SHORT:
+                if pos and pos.side == PositionSide.SHORT and quantity >= pos.quantity:
                     action = "平空"
-                elif pos and pos.side == PositionSide.LONG:
-                    action = "开多"
                 else:
                     action = "开多"
             else:
-                if pos and pos.side == PositionSide.LONG:
+                if pos and pos.side == PositionSide.LONG and quantity >= pos.quantity:
                     action = "平多"
-                elif pos and pos.side == PositionSide.SHORT:
-                    action = "开空"
                 else:
                     action = "开空"
             

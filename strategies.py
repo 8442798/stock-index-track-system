@@ -57,6 +57,7 @@ class DualMAStrategy(Strategy):
                     quantity=abs(current_position),
                     order_type=OrderType.MARKET
                 )
+                current_position = 0  # 更新本地持仓状态
             # 开多
             engine.submit_order(
                 symbol='IF',
@@ -75,6 +76,7 @@ class DualMAStrategy(Strategy):
                     quantity=abs(current_position),
                     order_type=OrderType.MARKET
                 )
+                current_position = 0  # 更新本地持仓状态
             # 开空
             engine.submit_order(
                 symbol='IF',
@@ -230,6 +232,7 @@ class BollingerBandStrategy(Strategy):
         
         # 交易信号
         if current_price < lower_band and current_position <= 0:
+            # 先平空，再开多
             if current_position < 0:
                 engine.submit_order(
                     symbol='IF',
@@ -237,6 +240,8 @@ class BollingerBandStrategy(Strategy):
                     quantity=abs(current_position),
                     order_type=OrderType.MARKET
                 )
+                current_position = 0  # 更新本地持仓状态
+            # 开多
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.BUY,
@@ -245,6 +250,7 @@ class BollingerBandStrategy(Strategy):
             )
             
         elif current_price > upper_band and current_position >= 0:
+            # 先平多，再开空
             if current_position > 0:
                 engine.submit_order(
                     symbol='IF',
@@ -252,6 +258,8 @@ class BollingerBandStrategy(Strategy):
                     quantity=abs(current_position),
                     order_type=OrderType.MARKET
                 )
+                current_position = 0  # 更新本地持仓状态
+            # 开空
             engine.submit_order(
                 symbol='IF',
                 side=OrderSide.SELL,
