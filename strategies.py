@@ -591,11 +591,12 @@ class FourDayFlipShortStrategy(Strategy):
     4日翻转短线策略
     1. 连续4天阴线(当日收盘<当日开盘)且累计跌幅大于6%：下一交易日开盘开多仓
     2. 连续4天阳线(当日收盘>当日开盘)且累计涨幅大于6%：下一交易日开盘开空仓
-    3. 移动止损：开仓后若持仓已有利，止损位跟随持仓极值移动(离极值回撤2%)
+    3. 盈利保护止损：
+       - 浮盈>=2%：止损始终比持仓最高/最低点回撤2%(移动止损锁利)
+       - 0<浮盈<2%：止损置于买入/卖出价(保本离场)
     4. 固定止损：亏损达2%平仓
     说明：阴/阳线按K线实体(收盘vs开盘)判定，不比较前一日收盘；
-          累计涨跌幅 = (当日收盘 / streak_days日前的收盘) - 1；
-          移动止损回撤比例与固定止损同为 stop_loss=2%
+          累计涨跌幅 = (当日收盘 / streak_days日前的收盘) - 1
     """
 
     def __init__(self, params: Dict = None):
@@ -663,19 +664,28 @@ class FourDayFlipShortStrategy(Strategy):
             self._execute_bar = False
             return
 
-        # 持仓中：跟踪极值并检查移动止损/固定止损
+        # 持仓中：跟踪极值并检查止损
         if current_position != 0 and self.entry_price is not None:
             stop_ratio = self.params['stop_loss']
-            if current_position > 0:  # 多头：极值取最高价，止损为极值回撤2%
+            if current_position > 0:  # 多头
                 if self.extreme_price is None:
                     self.extreme_price = self.entry_price
                 self.extreme_price = max(self.extreme_price, bar_high)
-                trail_stop = self.extreme_price * (1 - stop_ratio)
-                fixed_stop = self.entry_price * (1 - stop_ratio)
-                if bar_low <= trail_stop:
-                    if trail_stop >= fixed_stop and self.extreme_price > self.entry_price:
+                # 硬止损：亏损达2%
+                stop = self.entry_price * (1 - stop_ratio)
+                # 曾盈利(>0%)：止损上移到买入价(保本)
+                if self.extreme_price > self.entry_price:
+                    stop = max(stop, self.entry_price)
+                # 盈利>=2%：止损跟随最高点，始终比最高低2%
+                if self.extreme_price >= self.entry_price * (1 + stop_ratio):
+                    stop = max(stop, self.extreme_price * (1 - stop_ratio))
+                if bar_low <= stop:
+                    if self.extreme_price >= self.entry_price * (1 + stop_ratio):
                         reason = (f"多头移动止盈：自最高{self.extreme_price:.2f}"
-                                  f"回撤{stop_ratio*100:.0f}%，止损位{trail_stop:.2f}")
+                                  f"回撤{stop_ratio*100:.0f}%，止损位{stop:.2f}")
+                    elif self.extreme_price > self.entry_price:
+                        reason = (f"多头保本离场：盈利不足{stop_ratio*100:.0f}%，"
+                                  f"价格回落至买入价{self.entry_price:.2f}")
                     else:
                         reason = (f"多头固定止损：最低{bar_low:.2f}达开仓价"
                                   f"{self.entry_price:.2f}的-{stop_ratio*100:.0f}%")
@@ -689,16 +699,25 @@ class FourDayFlipShortStrategy(Strategy):
                     self.pending = None
                     self.extreme_price = None
                     return
-            else:  # 空头：极值取最低价，止损为极值反弹2%
+            else:  # 空头
                 if self.extreme_price is None:
                     self.extreme_price = self.entry_price
                 self.extreme_price = min(self.extreme_price, bar_low)
-                trail_stop = self.extreme_price * (1 + stop_ratio)
-                fixed_stop = self.entry_price * (1 + stop_ratio)
-                if bar_high >= trail_stop:
-                    if trail_stop <= fixed_stop and self.extreme_price < self.entry_price:
+                # 硬止损：亏损达2%
+                stop = self.entry_price * (1 + stop_ratio)
+                # 曾盈利(>0%)：止损下移到卖出价(保本)
+                if self.extreme_price < self.entry_price:
+                    stop = min(stop, self.entry_price)
+                # 盈利>=2%：止损跟随最低点，始终比最低高2%
+                if self.extreme_price <= self.entry_price * (1 - stop_ratio):
+                    stop = min(stop, self.extreme_price * (1 + stop_ratio))
+                if bar_high >= stop:
+                    if self.extreme_price <= self.entry_price * (1 - stop_ratio):
                         reason = (f"空头移动止盈：自最低{self.extreme_price:.2f}"
-                                  f"反弹{stop_ratio*100:.0f}%，止损位{trail_stop:.2f}")
+                                  f"反弹{stop_ratio*100:.0f}%，止损位{stop:.2f}")
+                    elif self.extreme_price < self.entry_price:
+                        reason = (f"空头保本离场：盈利不足{stop_ratio*100:.0f}%，"
+                                  f"价格回升至卖出价{self.entry_price:.2f}")
                     else:
                         reason = (f"空头固定止损：最高{bar_high:.2f}达开仓价"
                                   f"{self.entry_price:.2f}的+{stop_ratio*100:.0f}%")
